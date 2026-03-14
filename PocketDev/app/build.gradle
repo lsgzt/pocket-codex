@@ -128,7 +128,7 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
 
-chaquopy {
+python {
     defaultConfig {
         version = '3.8'
         buildPython 'python3'
