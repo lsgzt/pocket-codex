@@ -1,85 +1,82 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    id("kotlin-kapt")
-    id("com.chaquo.python") version "14.0.2"
+    id 'kotlin-kapt'
+    id 'com.chaquo.python' version '14.0.2'
 }
 
 android {
-    namespace = "com.pocketdev.app"
-    compileSdk = 34
+    namespace 'com.pocketdev.app'
+    compileSdk 34
 
     defaultConfig {
-        applicationId = "com.pocketdev.app"
-        minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        applicationId 'com.pocketdev.app'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables {
-            useSupportLibrary = true
+            useSupportLibrary true
         }
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64", "armeabi-v7a", "x86")
+            abiFilters 'arm64-v8a', 'x86_64', 'armeabi-v7a', 'x86'
         }
     }
 
-    flavorDimensions += "py"
+    flavorDimensions 'py'
     productFlavors {
-        create("py") {
-            dimension = "py"
+        py {
+            dimension 'py'
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            signingConfig = signingConfigs.getByName("debug")
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
         }
         debug {
-            isDebuggable = true
+            debuggable true
         }
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = '1.8'
     }
 
     buildFeatures {
-        compose = true
-        buildConfig = true
+        compose true
+        buildConfig true
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.11"
+        kotlinCompilerExtensionVersion '1.5.11'
     }
 
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "META-INF/DEPENDENCIES"
-            excludes += "org/mozilla/javascript/tools/**"
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
+            excludes += 'META-INF/DEPENDENCIES'
+            excludes += 'org/mozilla/javascript/tools/**'
         }
         jniLibs {
-            pickFirsts += listOf("**/*.so")
+            pickFirsts += ['**/*.so']
         }
     }
 }
 
 kapt {
-    correctErrorTypes = true
+    correctErrorTypes true
 }
 
 dependencies {
@@ -135,7 +132,7 @@ dependencies {
 
 chaquopy {
     defaultConfig {
-        version = "3.11"
-        buildPython("python3")
+        version = '3.11'
+        buildPython 'python3'
     }
 }
