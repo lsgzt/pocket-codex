@@ -1,9 +1,7 @@
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    id 'kotlin-kapt'
-    id 'com.chaquo.python' version '14.0.2'
-}
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'kotlin-kapt'
+apply plugin: 'com.chaquo.python'
 
 android {
     namespace 'com.pocketdev.app'
