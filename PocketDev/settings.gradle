@@ -1,28 +1,2 @@
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-        maven { url 'https://chaquo.com/maven' }
-    }
-    resolutionStrategy {
-        eachPlugin {
-            if (requested.id.id == 'com.chaquo.python') {
-                useModule("com.chaquo.python:gradle:${requested.version}")
-            }
-        }
-    }
-}
-
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
-    repositories {
-        google()
-        mavenCentral()
-        maven { url 'https://chaquo.com/maven' }
-        maven { url 'https://jitpack.io' }
-    }
-}
-
 rootProject.name = "PocketDev"
 include ':app'
