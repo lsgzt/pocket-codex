@@ -73,6 +73,7 @@ fun EditorScreen(
     val stdInput by viewModel.stdInput.collectAsState()
     var findText by remember { mutableStateOf("") }
     var replaceText by remember { mutableStateOf("") }
+    var selection by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0)) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -336,7 +337,6 @@ fun EditorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .imePadding()
         ) {
             // Find & Replace bar
             AnimatedVisibility(visible = showFindReplace) {
@@ -365,6 +365,8 @@ fun EditorScreen(
                     wordWrap = wordWrap,
                     autocompleteEnabled = autocompleteEnabled,
                     onCodeChange = viewModel::updateCode,
+                    selection = selection,
+                    onSelectionChange = { selection = it },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -524,6 +526,8 @@ fun CodeEditor(
     wordWrap: Boolean = false,
     autocompleteEnabled: Boolean = true,
     onCodeChange: (String) -> Unit,
+    selection: androidx.compose.ui.text.TextRange,
+    onSelectionChange: (androidx.compose.ui.text.TextRange) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val highlightedCode = remember(code, language) {
@@ -541,7 +545,6 @@ fun CodeEditor(
     val verticalScrollState = rememberScrollState()
 
     // Autocomplete state
-    var selection by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0)) }
     var showAutocomplete by remember { mutableStateOf(false) }
     var suggestions by remember { mutableStateOf<List<AutocompleteItem>>(emptyList()) }
 
@@ -559,7 +562,11 @@ fun CodeEditor(
     }
 
     Box(modifier = modifier) {
-        Row(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(verticalScrollState)
+        ) {
             // Line numbers — same font size and line height as code, shared scroll
             if (lineNumbers) {
                 val lines = code.split("\n").size
@@ -570,7 +577,6 @@ fun CodeEditor(
                         .width(lineNumberWidth)
                         .fillMaxHeight()
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .verticalScroll(verticalScrollState)
                         .padding(start = 2.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.End
                 ) {
@@ -622,14 +628,13 @@ fun CodeEditor(
                             }
                         }
                         
-                        selection = newSelection
+                        onSelectionChange(newSelection)
                         if (newText != code) {
                             onCodeChange(newText)
                         }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(verticalScrollState)
                         .padding(8.dp),
                     textStyle = codeTextStyle.copy(color = Color.Transparent),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -673,9 +678,9 @@ fun CodeEditor(
                                     val prefix = getWordPrefixForCompletion(code, cursorPosition)
                                     val before = code.substring(0, cursorPosition - prefix.length)
                                     val after = code.substring(cursorPosition)
-                                    val newCode = before + item.text + after
+                                    val newCode = before + item.insertText + after
                                     onCodeChange(newCode)
-                                    selection = androidx.compose.ui.text.TextRange(cursorPosition - prefix.length + item.text.length + item.cursorOffset)
+                                    onSelectionChange(androidx.compose.ui.text.TextRange(cursorPosition - prefix.length + item.insertText.length + item.cursorOffset))
                                     showAutocomplete = false
                                 }
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -940,6 +945,22 @@ fun AiResultDialog(
                     text = result.content,
                     style = MaterialTheme.typography.bodyMedium
                 )
+                if (result.correctedCode != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Proposed Code:", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = result.correctedCode,
+                            style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                }
             }
         },
         confirmButton = {

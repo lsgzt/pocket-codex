@@ -247,7 +247,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val model = prefsManager.aiModel.first()
             val result = groqRepository.modifyCode(prompt, code, language, apiKey, model)
             if (result.isSuccess && result.correctedCode != null) {
-                applyAiCode(result.correctedCode)
+                _aiState.value = UiState.Success(result)
             } else {
                 _aiState.value = UiState.Error(result.errorMessage ?: "AI request failed to generate code block")
             }
