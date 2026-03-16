@@ -36,7 +36,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         terminalManager = terminalManager,
         updateCode = { newCode -> updateCode(newCode) },
         getApiKey = {
-            secureStorage.getApiKey().first() ?: ""
+            secureStorage.groqApiKey
         }
     )
 
@@ -491,7 +491,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val code = _currentCode.value
         val language = _currentLanguage.value
         
-        terminalManager.appendNormalMessage("> $message")
+        terminalManager.appendOutput("> $message")
         terminalManager.appendStatusMessage("AI is thinking...")
         
         viewModelScope.launch {
@@ -501,14 +501,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             
-            val prompt = buildString {
-                append("You are a helpful coding assistant.\n")
-                append("Current Code:\n```${language.displayName.lowercase()}\n$code\n```\n\n")
-                append("User Message:\n$message")
-            }
-            
             val model = prefsManager.aiModel.first()
-            val result = groqRepository.explainCode(prompt, code, language, apiKey, model)
+            val result = groqRepository.modifyCode(message, code, language, apiKey, model)
             if (result.isSuccess) {
                 terminalManager.appendAgentMessage(result.content)
             } else {
