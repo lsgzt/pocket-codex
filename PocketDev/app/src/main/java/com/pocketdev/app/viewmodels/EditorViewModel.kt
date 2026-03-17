@@ -36,7 +36,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         terminalManager = terminalManager,
         updateCode = { newCode -> updateCode(newCode) },
         getApiKey = {
-            secureStorage.getApiKey().first() ?: ""
+            secureStorage.groqApiKey
         }
     )
 
@@ -80,7 +80,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _ghostSuggestion = MutableStateFlow<String?>(null)
     val ghostSuggestion: StateFlow<String?> = _ghostSuggestion
 
-    private var ghostSuggestionJob: Job? = null.asStateFlow()
+    private var ghostSuggestionJob: Job? = null
 
     // Save state
     private val _saveState = MutableStateFlow<UiState<Unit>>(UiState.Idle)
@@ -436,8 +436,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun writeCodeWithAi(prompt: String) {
-        val code = _currentCode.value
-        val language = _currentLanguage.value
+        val files = _currentFiles.value
 
         val apiKey = secureStorage.groqApiKey
         if (apiKey.isBlank()) {
@@ -457,7 +456,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _aiState.value = UiState.Loading
             val model = prefsManager.aiModel.first()
-            val result = groqRepository.modifyCode(prompt, code, language, apiKey, model)
+            val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else "main.py"
+            val result = groqRepository.modifyCode(prompt, files, activeFileName, apiKey, model)
             if (result.isSuccess && result.patches.isNotEmpty()) {
                 _aiState.value = UiState.Success(result.copy(isEdit = true))
             } else {
@@ -657,10 +657,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun chatWithAi(message: String) {
-        val code = _currentCode.value
-        val language = _currentLanguage.value
+        val files = _currentFiles.value
+        val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else "main.py"
         
-        terminalManager.appendNormalMessage("> $message")
+        terminalManager.appendOutput("> $message")
         terminalManager.appendStatusMessage("AI is thinking...")
         
         viewModelScope.launch {
@@ -670,14 +670,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             
-            val prompt = buildString {
-                append("You are a helpful coding assistant.\n")
-                append("Current Code:\n```${language.displayName.lowercase()}\n$code\n```\n\n")
-                append("User Message:\n$message")
-            }
-            
             val model = prefsManager.aiModel.first()
-            val result = groqRepository.explainCode(prompt, code, language, apiKey, model)
+            val result = groqRepository.editCode(message, files, activeFileName, apiKey, model)
             if (result.isSuccess) {
                 terminalManager.appendAgentMessage(result.content)
             } else {
