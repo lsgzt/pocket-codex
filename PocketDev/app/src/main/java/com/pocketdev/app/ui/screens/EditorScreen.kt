@@ -90,7 +90,6 @@ fun EditorScreen(
     var showAddFileDialog by remember { mutableStateOf(false) }
     var showHtmlPreview by remember { mutableStateOf(false) }
     var showFindReplace by remember { mutableStateOf(false) }
-    var showInputPanel by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var isTerminalFullScreen by remember { mutableStateOf(false) }
     val stdInput by viewModel.stdInput.collectAsState()
@@ -343,14 +342,6 @@ fun EditorScreen(
                                     showMoreMenu = false
                                 }
                             )
-                            DropdownMenuItem(
-                                text = { Text("Standard Input") },
-                                leadingIcon = { Icon(Icons.Default.Keyboard, null) },
-                                onClick = {
-                                    showInputPanel = !showInputPanel
-                                    showMoreMenu = false
-                                }
-                            )
                             if (language == Language.HTML && htmlContent != null) {
                                 DropdownMenuItem(
                                     text = { Text("Preview HTML") },
@@ -518,51 +509,6 @@ fun EditorScreen(
                                 modifier = Modifier.fillMaxSize()
                             )
                             // No more popup - suggestions are shown inline
-                        }
-                    }
-                }
-            }
-
-            // Input Panel
-            if (!isTerminalFullScreen) {
-                AnimatedVisibility(visible = showInputPanel) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        tonalElevation = 2.dp
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Keyboard,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    "Standard Input",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.weight(1f))
-                                IconButton(onClick = { showInputPanel = false }, modifier = Modifier.size(24.dp)) {
-                                    Icon(Icons.Default.Close, "Close input panel", modifier = Modifier.size(16.dp))
-                                }
-                            }
-                            Spacer(Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = stdInput,
-                                onValueChange = viewModel::updateStdInput,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp, max = 120.dp),
-                                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
-                                placeholder = { Text("Enter input for your script here...", style = TextStyle(fontSize = 13.sp)) },
-                                minLines = 3,
-                                maxLines = 5
-                            )
                         }
                     }
                 }
@@ -1266,40 +1212,74 @@ fun TerminalPanel(
                 }
             }
 
+            // Real-time input prompt at bottom (like reference image)
             if (onSendInput != null) {
                 var inputText by remember { mutableStateOf("") }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surface
                 ) {
-                    OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { inputText = it },
-                        placeholder = { Text("Type a message...", style = MaterialTheme.typography.bodySmall) },
-                        modifier = Modifier.weight(1f),
-                        textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
-                        singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
-                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                            onSend = {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = ">",
+                            style = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                        BasicTextField(
+                            value = inputText,
+                            onValueChange = { inputText = it },
+                            textStyle = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                            ),
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                onSend = {
+                                    if (inputText.isNotBlank()) {
+                                        onSendInput(inputText)
+                                        inputText = ""
+                                    }
+                                }
+                            ),
+                            decorationBox = { innerTextField ->
+                                if (inputText.isEmpty()) {
+                                    Text(
+                                        "Type input here...",
+                                        style = TextStyle(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+                        IconButton(
+                            onClick = {
                                 if (inputText.isNotBlank()) {
                                     onSendInput(inputText)
                                     inputText = ""
                                 }
-                            }
-                        )
-                    )
-                    IconButton(
-                        onClick = {
-                            if (inputText.isNotBlank()) {
-                                onSendInput(inputText)
-                                inputText = ""
-                            }
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Send, "Send", modifier = Modifier.size(18.dp))
                         }
-                    ) {
-                        Icon(Icons.Default.Send, contentDescription = "Send")
                     }
                 }
             }
