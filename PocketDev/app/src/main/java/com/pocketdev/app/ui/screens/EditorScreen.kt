@@ -537,6 +537,19 @@ fun EditorScreen(
                     modifier = if (isTerminalFullScreen) Modifier.fillMaxSize() else Modifier
                 )
             }
+            
+            // Special Characters Bar - appears above keyboard for quick symbol access
+            SpecialCharactersBar(
+                onCharacterClick = { char ->
+                    // Insert character at cursor position
+                    val currentCode = viewModel.currentCode.value
+                    val cursorPos = selection.start
+                    val newCode = currentCode.substring(0, cursorPos) + char + currentCode.substring(cursorPos)
+                    viewModel.updateCode(newCode)
+                    // Move cursor after inserted character
+                    selection = androidx.compose.ui.text.TextRange(cursorPos + char.length)
+                }
+            )
         }
     }
 
@@ -834,6 +847,10 @@ fun CodeEditor(
     var suggestions by remember { mutableStateOf<List<AutocompleteItem>>(emptyList()) }
     var cursorRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     var lineNumberWidth by remember { mutableStateOf(0.dp) }
+    
+    // Track visual line count for word wrap mode
+    var visualLineCount by remember { mutableStateOf(1) }
+    var lineIndexToNumber by remember { mutableStateOf(mapOf<Int, Int>()) }
 
     // Update suggestions when code changes
     LaunchedEffect(textFieldValue.text, textFieldValue.selection, language, autocompleteEnabled) {
@@ -848,6 +865,9 @@ fun CodeEditor(
         }
     }
 
+    // Track visual line count for word wrap mode
+    var visualLineInfo by remember { mutableStateOf(Pair(1, mapOf<Int, Int>())) }
+
     Box(modifier = modifier) {
         Row(
             modifier = Modifier
@@ -856,9 +876,22 @@ fun CodeEditor(
         ) {
             // Line numbers — same font size and line height as code, shared scroll
             if (lineNumbers) {
-                val lines = textFieldValue.text.split("\n").size
-                lineNumberWidth = (maxOf(lines, 1).toString().length * fontSize * 0.6 + 12).dp
-                val lineNumbersText = (1..maxOf(lines, 1)).joinToString("\n")
+                val logicalLines = textFieldValue.text.split("\n").size
+                lineNumberWidth = (maxOf(logicalLines, 1).toString().length * fontSize * 0.6 + 12).dp
+                
+                // For word wrap, show line numbers based on visual lines
+                // Each visual line shows the logical line number it belongs to
+                val (visualCount, lineMapping) = if (wordWrap) visualLineInfo else Pair(logicalLines, emptyMap())
+                
+                val lineNumbersText = if (wordWrap && lineMapping.isNotEmpty()) {
+                    // Show logical line numbers for each visual line
+                    (0 until visualCount).map { visualLine ->
+                        lineMapping[visualLine] ?: (visualLine + 1)
+                    }.joinToString("\n")
+                } else {
+                    (1..maxOf(logicalLines, 1)).joinToString("\n")
+                }
+                
                 Column(
                     modifier = Modifier
                         .width(lineNumberWidth)
@@ -921,6 +954,27 @@ fun CodeEditor(
                     onTextLayout = { layoutResult ->
                         val cursorPosition = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
                         cursorRect = layoutResult.getCursorRect(cursorPosition)
+                        
+                        // Calculate visual line info for word wrap mode
+                        if (wordWrap) {
+                            val lineCount = layoutResult.lineCount
+                            val mapping = mutableMapOf<Int, Int>()
+                            val text = textFieldValue.text
+                            var currentLogicalLine = 1
+                            var charIndex = 0
+                            
+                            for (visualLine in 0 until lineCount) {
+                                mapping[visualLine] = currentLogicalLine
+                                val lineEnd = layoutResult.getLineEnd(visualLine)
+                                while (charIndex < lineEnd && charIndex < text.length) {
+                                    if (text[charIndex] == '\n') {
+                                        currentLogicalLine++
+                                    }
+                                    charIndex++
+                                }
+                            }
+                            visualLineInfo = Pair(lineCount, mapping)
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1741,4 +1795,89 @@ object SyntaxHighlighter {
         Regex("\\b(-?\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)\\b") to colorNumber,
         Regex("[{\\[\\]},:]") to colorOperator,
     )
+}
+
+/**
+ * Special Characters Bar - A swipeable row of frequently used programming symbols
+ * Shows above the keyboard for quick access
+ */
+@Composable
+fun SpecialCharactersBar(
+    onCharacterClick: (String) -> Unit
+) {
+    val specialChars = listOf(
+        // Programming symbols
+        listOf("(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/", "\\", ".", ":", ";", "\"", "\"", "'", "'"),
+        // Page 2
+        listOf("→", "←", "↑", "↓", "↔", "⇒"),
+        // Common operators
+        listOf("==", "!=", "&&", "||", "?:", "++", "--", "%=", "<=", ">="),
+        // Quick snippets
+        listOf("fun ", "val ", "var ", "if ", "else", "for ", "while ", "return ", "import ", "class ")
+    )
+    
+    var currentPage by remember { mutableStateOf(0) }
+    val totalItems = specialChars.size
+    val items = specialChars[currentPage]
+    
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items.forEach { char ->
+            Box(
+                modifier = Modifier
+                    .clickable { onCharacterClick(char) }
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = char,
+                    style = TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        }
+        
+        // Page indicator dots        if (totalItems > 1) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(totalItems) { page ->
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (page == currentPage) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .clickable { currentPage = page.coerceIn(0, totalItems - 1) }
+                            .padding(2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${page + 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (page == currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    )
+                }
+            }
+        }
+    }
 }
