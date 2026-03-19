@@ -1797,84 +1797,53 @@ object SyntaxHighlighter {
     )
 }
 
+
 /**
  * Special Characters Bar - A swipeable row of frequently used programming symbols
- * Shows above the keyboard for quick access
+ * Shows above the keyboard for quick symbol access
  */
 @Composable
 fun SpecialCharactersBar(
     onCharacterClick: (String) -> Unit
 ) {
     val specialChars = listOf(
-        // Programming symbols
-        listOf("(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/", "\\", ".", ":", ";", "\"", "\"", "'", "'"),
-        // Page 2
-        listOf("→", "←", "↑", "↓", "↔", "⇒"),
-        // Common operators
-        listOf("==", "!=", "&&", "||", "?:", "++", "--", "%=", "<=", ">="),
-        // Quick snippets
-        listOf("fun ", "val ", "var ", "if ", "else", "for ", "while ", "return ", "import ", "class ")
+        "(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/",
+        ".", ":", ";", "\"", "'", "!", "?", "@", "#", "$", "%", "&", "_",
+        "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "=>", "::"
     )
     
-    var currentPage by remember { mutableStateOf(0) }
-    val totalItems = specialChars.size
-    val items = specialChars[currentPage]
-    
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically
     ) {
-        items.forEach { char ->
-            Box(
-                modifier = Modifier
-                    .clickable { onCharacterClick(char) }
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = char,
-                    style = TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            )
-        }
-        
-        // Page indicator dots        if (totalItems > 1) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                repeat(totalItems) { page ->
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (page == currentPage) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.surfaceVariant
-                            )
-                            .clickable { currentPage = page.coerceIn(0, totalItems - 1) }
-                            .padding(2.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "${page + 1}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (page == currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            specialChars.forEach { char ->
+                Box(
+                    modifier = Modifier
+                        .clickable { onCharacterClick(char) }
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            RoundedCornerShape(4.dp)
                         )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = char,
+                        style = TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
