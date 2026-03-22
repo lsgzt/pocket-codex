@@ -1530,6 +1530,7 @@ fun CodeEditor(
         }
     }
 }
+}
 
 private fun getWordPrefixForCompletion(code: String, cursorPos: Int): String {
     if (cursorPos <= 0 || cursorPos > code.length) return ""
