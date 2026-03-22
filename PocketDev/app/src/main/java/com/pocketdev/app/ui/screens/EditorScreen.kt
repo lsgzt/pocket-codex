@@ -1712,11 +1712,13 @@ private fun TerminalMessagesList(
             fontSize = 13.sp
         )
     }
-    val normalTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurface) {
-        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurface)
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariantColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val normalTextStyle = remember(terminalBaseTextStyle, onSurfaceColor) {
+        terminalBaseTextStyle.copy(color = onSurfaceColor)
     }
-    val emptyTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurfaceVariant) {
-        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+    val emptyTextStyle = remember(terminalBaseTextStyle, onSurfaceVariantColor) {
+        terminalBaseTextStyle.copy(color = onSurfaceVariantColor.copy(alpha = 0.6f))
     }
     val errorTextStyle = remember(terminalBaseTextStyle) { terminalBaseTextStyle.copy(color = Color(0xFFEF9A9A)) }
     val agentTextStyle = remember(terminalBaseTextStyle) { terminalBaseTextStyle.copy(color = Color(0xFF81C784)) }
@@ -1766,14 +1768,17 @@ private fun TerminalInputBar(
             fontSize = 13.sp
         )
     }
-    val promptTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.primary) {
-        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.primary)
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val onSurfaceColor2 = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariantColor2 = MaterialTheme.colorScheme.onSurfaceVariant
+    val promptTextStyle = remember(terminalBaseTextStyle, primaryColor) {
+        terminalBaseTextStyle.copy(color = primaryColor)
     }
-    val inputTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurface) {
-        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurface)
+    val inputTextStyle = remember(terminalBaseTextStyle, onSurfaceColor2) {
+        terminalBaseTextStyle.copy(color = onSurfaceColor2)
     }
-    val placeholderTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurfaceVariant) {
-        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+    val placeholderTextStyle = remember(terminalBaseTextStyle, onSurfaceVariantColor2) {
+        terminalBaseTextStyle.copy(color = onSurfaceVariantColor2.copy(alpha = 0.5f))
     }
 
     val submitInput = remember(onSendInput, inputText) {
@@ -1911,11 +1916,12 @@ fun AiResultDialog(
     val scrollState = rememberScrollState()
     var followUpText by remember { mutableStateOf("") }
     val proposedCodeShape = remember { RoundedCornerShape(8.dp) }
-    val proposedCodeTextStyle = remember(MaterialTheme.colorScheme.onSurfaceVariant) {
+    val onSurfaceVariantColor3 = MaterialTheme.colorScheme.onSurfaceVariant
+    val proposedCodeTextStyle = remember(onSurfaceVariantColor3) {
         TextStyle(
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = onSurfaceVariantColor3
         )
     }
 

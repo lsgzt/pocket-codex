@@ -122,11 +122,12 @@ fun ExampleCard(
     val previewSnippet = remember(example.code) {
         example.code.lines().take(4).joinToString("\n")
     }
-    val previewTextStyle = remember(MaterialTheme.colorScheme.onSurfaceVariant) {
+    val previewTextStyleColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val previewTextStyle = remember(previewTextStyleColor) {
         androidx.compose.ui.text.TextStyle(
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = previewTextStyleColor
         )
     }
 
@@ -217,11 +218,12 @@ fun ExamplePreviewDialog(
     onDismiss: () -> Unit
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
-    val codeTextStyle = remember(MaterialTheme.colorScheme.onSurfaceVariant) {
+    val codeTextStyleColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val codeTextStyle = remember(codeTextStyleColor) {
         androidx.compose.ui.text.TextStyle(
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = codeTextStyleColor,
             lineHeight = 18.sp
         )
     }
