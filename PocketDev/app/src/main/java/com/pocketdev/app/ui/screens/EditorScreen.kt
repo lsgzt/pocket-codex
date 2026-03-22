@@ -847,8 +847,14 @@ private fun KeyboardAwareSpecialCharactersBar(
 
     AnimatedVisibility(
         visible = isKeyboardVisible,
-        enter = fadeIn(animationSpec = tween(durationMillis = 150, delayMillis = 200)),
-        exit = fadeOut(animationSpec = tween(durationMillis = 100))
+        enter = slideInVertically(
+            initialOffsetY = { it },
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
+        ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+        exit = slideOutVertically(
+            targetOffsetY = { it },
+            animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing)
+        ) + fadeOut(animationSpec = tween(durationMillis = 150))
     ) {
         SpecialCharactersBar(onCharacterClick = onCharacterClick)
     }
@@ -1169,6 +1175,11 @@ fun CodeEditor(
     var baseHighlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
 
     LaunchedEffect(textFieldValue.text, language) {
+        if (textFieldValue.text.length > 5000) {
+            delay(500) // Longer delay for large files
+        } else {
+            delay(150) // Small delay to avoid flickering while typing
+        }
         baseHighlightedCode = withContext(Dispatchers.Default) {
             SyntaxHighlighter.highlight(textFieldValue.text, language)
         }
@@ -1287,6 +1298,8 @@ fun CodeEditor(
     LaunchedEffect(textFieldValue.text, language, autocompleteEnabled) {
         val cursorPosition = textFieldValue.selection.start
         if (autocompleteEnabled && cursorPosition <= textFieldValue.text.length) {
+            // Debounce autocomplete to avoid stuttering
+            delay(200)
             val newSuggestions = withContext(Dispatchers.Default) {
                 AutocompleteEngine.getSuggestions(textFieldValue.text, cursorPosition, language)
             }
@@ -1350,12 +1363,20 @@ fun CodeEditor(
                 BasicTextField(
                     value = textFieldValue,
                     onValueChange = { tfv ->
+                        // If only selection changed, update quickly and skip heavy logic
+                        if (tfv.text == textFieldValue.text) {
+                            textFieldValue = tfv
+                            onSelectionChange(tfv.selection)
+                            return@BasicTextField
+                        }
+
                         var newText = tfv.text
                         var newSelection = tfv.selection
                         var newCursor = newSelection.start
                         
                         // Auto-closing brackets
-                        if (newText.length == textFieldValue.text.length + 1 && newCursor > 0) {
+                        // Add tfv.composition == null to avoid interfering with IME autocorrect
+                        if (tfv.composition == null && newText.length == textFieldValue.text.length + 1 && newCursor > 0) {
                             val insertedChar = newText[newCursor - 1]
                             val closingChar = when (insertedChar) {
                                 '(' -> ")"
@@ -1374,6 +1395,7 @@ fun CodeEditor(
                         val newTfv = androidx.compose.ui.text.input.TextFieldValue(newText, newSelection)
                         textFieldValue = newTfv
                         
+                        // Use a side effect for external sync to avoid blocking the input loop
                         onSelectionChange(newSelection)
                         if (newText != code) {
                             onCodeChange(newText)
@@ -2325,55 +2347,61 @@ fun SpecialCharactersBar(
 ) {
     val specialChars = remember {
         listOf(
-            "(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/",
-            ".", ":", ";", "\"", "'", "!", "?", "@", "#", "$", "%", "&", "_",
+            "(", ")", "{", "}", "[", "]", "\"", "'", "<", ">", "=", ";", ":",
+            ".", ",", "+", "-", "*", "/", "!", "?", "@", "#", "$", "%", "&", "_", "|", "\\", "`",
             "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "=>", "::"
         )
     }
     val scrollState = rememberScrollState()
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val chipShape = remember { RoundedCornerShape(4.dp) }
+    val chipShape = remember { RoundedCornerShape(8.dp) }
     val chipTextStyle = remember {
         TextStyle(
             fontFamily = FontFamily.Monospace,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
         )
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surface
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scrollState)
-                .padding(horizontal = 4.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            specialChars.forEach { char ->
-                key(char) {
-                    Box(
-                        modifier = Modifier
-                            .clickable {
-                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                onCharacterClick(char)
+        Column {
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(scrollState)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                specialChars.forEach { char ->
+                    key(char) {
+                        Surface(
+                            modifier = Modifier
+                                .clickable {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                    onCharacterClick(char)
+                                },
+                            shape = chipShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                            tonalElevation = 1.dp
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = char,
+                                    style = chipTextStyle,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
                             }
-                            .background(
-                                MaterialTheme.colorScheme.surfaceVariant,
-                                chipShape
-                            )
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = char,
-                            style = chipTextStyle,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        }
                     }
                 }
             }

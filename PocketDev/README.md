@@ -84,7 +84,7 @@
            │
 ┌──────────▼──────────┐
 │  Groq API (Retrofit) │
-│  llama-3.3-70b       │
+│  kimi-k2-instruct-0905│
 └─────────────────────┘
 ```
 
@@ -125,7 +125,7 @@ The Groq API is **free** — no credit card required for the free tier.
 
 > 🔒 The key is stored encrypted on your device using AES-256-GCM.
 
-**Models used:** `llama-3.3-70b-versatile` (primary)
+**Models used:** `moonshotai/kimi-k2-instruct-0905` (primary)
 
 ---
 

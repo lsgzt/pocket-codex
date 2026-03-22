@@ -26,7 +26,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_UNSAVED_LANGUAGE = stringPreferencesKey("unsaved_language")
         val KEY_AI_MODEL = stringPreferencesKey("ai_model")
 
-        const val DEFAULT_AI_MODEL = "llama-3.3-70b-versatile"
+        const val DEFAULT_AI_MODEL = "moonshotai/kimi-k2-instruct-0905"
 
         const val THEME_DARK = "dark"
         const val THEME_LIGHT = "light"

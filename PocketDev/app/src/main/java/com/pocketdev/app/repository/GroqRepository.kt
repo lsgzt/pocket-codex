@@ -49,7 +49,7 @@ class GroqRepository {
         }
     }
 
-    suspend fun fixBug(files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun fixBug(files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val prompt = buildString {
             append("Analyze this project and identify any bugs, errors, or issues.\n\n")
             append(buildProjectContext(files, activeFileName))
@@ -71,7 +71,7 @@ class GroqRepository {
         return callGroqForMultiEdit(prompt, files, apiKey, model)
     }
 
-    suspend fun getGhostSuggestion(code: String, cursorPosition: Int, language: Language, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun getGhostSuggestion(code: String, cursorPosition: Int, language: Language, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         // Get context around cursor for better understanding
         val lines = code.lines()
         var currentLineIndex = 0
@@ -170,7 +170,7 @@ class GroqRepository {
             result
         }
     }
-    suspend fun explainCode(files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun explainCode(files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val prompt = buildString {
             append("Explain the code in simple, beginner-friendly terms.\n\n")
             append(buildProjectContext(files, activeFileName))
@@ -185,7 +185,7 @@ class GroqRepository {
         return callGroqWithRetry(prompt, apiKey, model, extractCode = false)
     }
 
-    suspend fun improveCode(files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun improveCode(files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val prompt = buildString {
             append("Suggest improvements for this project.\n\n")
             append(buildProjectContext(files, activeFileName))
@@ -209,7 +209,7 @@ class GroqRepository {
         return callGroqForMultiEdit(prompt, files, apiKey, model)
     }
 
-    suspend fun autoFixCode(currentCode: String, error: String, historyText: String, language: Language, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun autoFixCode(currentCode: String, error: String, historyText: String, language: Language, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val prompt = buildString {
             append("You are fixing code that failed to execute.\n\n")
             append("Current Code:\n$currentCode\n\n")
@@ -235,7 +235,7 @@ class GroqRepository {
         return callGroqForMultiEdit(prompt, listOf(file), apiKey, model)
     }
 
-    suspend fun modifyCode(prompt: String, files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun modifyCode(prompt: String, files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val fullPrompt = buildString {
             append("You are an expert developer. Please modify the code according to this request: $prompt\n\n")
             append(buildProjectContext(files, activeFileName))
@@ -251,7 +251,7 @@ class GroqRepository {
         return callGroqForMultiEdit(fullPrompt, files, apiKey, model)
     }
 
-    suspend fun askFollowUp(previousPrompt: String, previousResponse: String, question: String, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun askFollowUp(previousPrompt: String, previousResponse: String, question: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val prompt = buildString {
             append("Previous Context:\n$previousPrompt\n\n")
             append("Your Previous Response:\n$previousResponse\n\n")
@@ -261,7 +261,7 @@ class GroqRepository {
         return callGroqWithRetry(prompt, apiKey, model, extractCode = false)
     }
 
-    private suspend fun callGroqWithRetry(prompt: String, apiKey: String, model: String = "llama-3.3-70b-versatile", extractCode: Boolean = true): AiResult {
+    private suspend fun callGroqWithRetry(prompt: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905", extractCode: Boolean = true): AiResult {
         var lastError = ""
         repeat(MAX_RETRIES) { attempt ->
             try {
@@ -288,7 +288,7 @@ class GroqRepository {
         )
     }
 
-    private suspend fun callGroq(prompt: String, apiKey: String, model: String = "llama-3.3-70b-versatile", extractCode: Boolean = true): AiResult {
+    private suspend fun callGroq(prompt: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905", extractCode: Boolean = true): AiResult {
         val truncatedPrompt = if (prompt.length > 20000) prompt.take(20000) + "\n...[truncated]" else prompt
         val request = ChatRequest(
             model = model,
@@ -330,7 +330,7 @@ class GroqRepository {
         }
     }
 
-    suspend fun editCode(prompt: String, files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    suspend fun editCode(prompt: String, files: List<com.pocketdev.app.data.models.ProjectFile>, activeFileName: String, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val fullPrompt = buildString {
             append("You are modifying a project with multiple files.\n\n")
             append("Instruction:\n$prompt\n\n")
@@ -373,7 +373,7 @@ class GroqRepository {
         )
     }
 
-    private suspend fun callGroqForMultiEdit(prompt: String, originalFiles: List<com.pocketdev.app.data.models.ProjectFile>, apiKey: String, model: String = "llama-3.3-70b-versatile"): AiResult {
+    private suspend fun callGroqForMultiEdit(prompt: String, originalFiles: List<com.pocketdev.app.data.models.ProjectFile>, apiKey: String, model: String = "moonshotai/kimi-k2-instruct-0905"): AiResult {
         val truncatedPrompt = if (prompt.length > 20000) prompt.take(20000) + "\n...[truncated]" else prompt
         val request = ChatRequest(
             model = model,
