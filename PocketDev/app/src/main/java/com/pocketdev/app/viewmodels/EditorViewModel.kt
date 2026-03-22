@@ -158,25 +158,33 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var syncFilesJob: Job? = null
     private var saveJob: kotlinx.coroutines.Job? = null
 
     fun updateCode(code: String) {
+        if (_currentCode.value == code) return
         _currentCode.value = code
         hasUnsavedChanges = true
         
-        val files = _currentFiles.value.toMutableList()
-        val activeIndex = _activeFileIndex.value
-        if (activeIndex in files.indices) {
-            files[activeIndex] = files[activeIndex].copy(code = code)
-            _currentFiles.value = files
-        }
-
         // Clear ghost suggestion but do not cancel the job, so it can run after typing
         _ghostSuggestion.value = null
 
+        // Sync to files list only after a short delay to avoid excessive recompositions
+        // in UI components observing files (like tabs)
+        syncFilesJob?.cancel()
+        syncFilesJob = viewModelScope.launch {
+            delay(500)
+            val files = _currentFiles.value.toMutableList()
+            val activeIndex = _activeFileIndex.value
+            if (activeIndex in files.indices) {
+                files[activeIndex] = files[activeIndex].copy(code = code)
+                _currentFiles.value = files
+            }
+        }
+
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(1000)
+            kotlinx.coroutines.delay(2000)
             prefsManager.setUnsavedCode(code)
         }
     }

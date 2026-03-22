@@ -280,7 +280,10 @@ private fun EditorTopBar(
                 onLanguageSelected = onLanguageSelected
             )
             TerminalToggleButton(uiState = uiState)
-            IconButton(onClick = onOpenSaveDialog) {
+            IconButton(
+                onClick = onOpenSaveDialog,
+                modifier = Modifier.focusable(false)
+            ) {
                 Icon(Icons.Default.Save, "Save")
             }
             AiFeaturesMenu(
@@ -308,7 +311,10 @@ private fun EditorTopBar(
 
 @Composable
 private fun TerminalToggleButton(uiState: EditorUiState) {
-    IconButton(onClick = { uiState.showTerminal = !uiState.showTerminal }) {
+    IconButton(
+        onClick = { uiState.showTerminal = !uiState.showTerminal },
+        modifier = Modifier.focusable(false)
+    ) {
         Icon(
             imageVector = Icons.Default.Terminal,
             contentDescription = "Toggle Terminal",
@@ -333,12 +339,16 @@ private fun EditorMoreMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { expanded = true }) {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.focusable(false)
+        ) {
             Icon(Icons.Default.MoreVert, "More")
         }
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = false)
         ) {
             DropdownMenuItem(
                 text = { Text("New File") },
@@ -411,6 +421,7 @@ private fun EditorMoreMenu(
         }
     }
 }
+
 
 @Composable
 private fun EditorRunFab(
@@ -1084,12 +1095,16 @@ fun LanguageSelectorMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { expanded = true }) {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.focusable(false)
+        ) {
             Icon(Icons.Default.SwapHoriz, "Change Language")
         }
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = false)
         ) {
             Language.values().forEach { lang ->
                 DropdownMenuItem(
@@ -1117,12 +1132,16 @@ fun AiFeaturesMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { expanded = true }) {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.focusable(false)
+        ) {
             Icon(Icons.Default.AutoAwesome, "AI Features", tint = Color(0xFFFFB74D))
         }
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = false)
         ) {
             DropdownMenuItem(text = { Text("✨ Write Code with AI") }, onClick = { onWriteCode(); expanded = false })
             DropdownMenuItem(text = { Text("📝 Edit Code with AI") }, onClick = { onEditCode(); expanded = false })
@@ -1132,6 +1151,7 @@ fun AiFeaturesMenu(
         }
     }
 }
+
 @Composable
 fun CodeEditor(
     code: String,
@@ -1163,13 +1183,17 @@ fun CodeEditor(
     // Sync external code changes (e.g., loading a new file or AI edits)
     LaunchedEffect(code) {
         if (code != textFieldValue.text) {
-            textFieldValue = textFieldValue.copy(text = code)
+            textFieldValue = textFieldValue.copy(
+                text = code,
+                selection = if (selection.start <= code.length && selection.end <= code.length) selection 
+                            else androidx.compose.ui.text.TextRange(code.length)
+            )
         }
     }
 
     // Sync external selection changes
     LaunchedEffect(selection) {
-        if (selection != textFieldValue.selection) {
+        if (selection != textFieldValue.selection && selection.end <= textFieldValue.text.length) {
             textFieldValue = textFieldValue.copy(selection = selection)
         }
     }
@@ -1177,79 +1201,85 @@ fun CodeEditor(
     var baseHighlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
 
     LaunchedEffect(textFieldValue.text, language) {
-        if (textFieldValue.text.length > 5000) {
-            delay(500) // Longer delay for large files
-        } else {
-            delay(150) // Small delay to avoid flickering while typing
-        }
+        // Highlighting is now fast enough to run without a large delay
+        // We still use a tiny delay to debounce very rapid typing if needed, but let's try 0 first for "instant" feel
         baseHighlightedCode = withContext(Dispatchers.Default) {
             SyntaxHighlighter.highlight(textFieldValue.text, language)
         }
     }
 
-    val highlightedCode = if (ghostSuggestion == null && inlineDiffSuggestion == null) {
-        baseHighlightedCode
-    } else remember(
-        baseHighlightedCode,
-        ghostSuggestion,
-        inlineDiffSuggestion,
-        textFieldValue.selection,
-        textFieldValue.text
-    ) {
-        when {
-            ghostSuggestion != null -> {
-                val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
-                val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-                builder.append(baseHighlightedCode.subSequence(0, cursor))
-                builder.withStyle(
-                    SpanStyle(
-                        color = Color(0xFF888888),
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                    )
-                ) {
-                    append(ghostSuggestion)
+    val highlightedCode by remember {
+        derivedStateOf {
+            if (ghostSuggestion == null && inlineDiffSuggestion == null) {
+                if (textFieldValue.text == baseHighlightedCode.text) {
+                    baseHighlightedCode
+                } else {
+                    // While highlighting is catching up, show raw text to avoid any perceived delay
+                    androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
                 }
-                builder.append(baseHighlightedCode.subSequence(cursor, baseHighlightedCode.length))
-                builder.toAnnotatedString()
-            }
-
-            inlineDiffSuggestion != null &&
-                inlineDiffSuggestion.deleteText != null &&
-                inlineDiffSuggestion.addText != null -> {
-                val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-                val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
-                val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
-
-                builder.append(baseHighlightedCode.subSequence(0, deleteStart))
-
-                if (deleteEnd > deleteStart) {
-                    builder.withStyle(
-                        SpanStyle(
-                            color = Color(0xFFE53935),
-                            background = Color(0x33FFCDD2),
-                            textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
-                        )
-                    ) {
-                        append(textFieldValue.text.substring(deleteStart, deleteEnd))
+            } else {
+                // Apply ghost suggestions or inline diffs
+                when {
+                    ghostSuggestion != null -> {
+                        val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
+                        val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+                        val baseToUse = if (textFieldValue.text == baseHighlightedCode.text) baseHighlightedCode 
+                                      else androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
+                        
+                        builder.append(baseToUse.subSequence(0, cursor))
+                        builder.withStyle(
+                            SpanStyle(
+                                color = Color(0xFF888888),
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            )
+                        ) {
+                            append(ghostSuggestion)
+                        }
+                        builder.append(baseToUse.subSequence(cursor, baseToUse.length))
+                        builder.toAnnotatedString()
                     }
-                }
 
-                builder.withStyle(
-                    SpanStyle(
-                        color = Color(0xFF2E7D32),
-                        background = Color(0x33C8E6C9)
-                    )
-                ) {
-                    append(inlineDiffSuggestion.addText)
-                }
+                    inlineDiffSuggestion != null &&
+                        inlineDiffSuggestion.deleteText != null &&
+                        inlineDiffSuggestion.addText != null -> {
+                        val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+                        val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
+                        val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
 
-                builder.append(baseHighlightedCode.subSequence(deleteEnd, baseHighlightedCode.length))
-                builder.toAnnotatedString()
+                        builder.append(textFieldValue.text.substring(0, deleteStart))
+
+                        if (deleteEnd > deleteStart) {
+                            builder.withStyle(
+                                SpanStyle(
+                                    color = Color(0xFFE53935),
+                                    background = Color(0x33FFCDD2),
+                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
+                                )
+                            ) {
+                                append(textFieldValue.text.substring(deleteStart, deleteEnd))
+                            }
+                        }
+
+                        builder.withStyle(
+                            SpanStyle(
+                                color = Color(0xFF2E7D32),
+                                background = Color(0x33C8E6C9)
+                            )
+                        ) {
+                            append(inlineDiffSuggestion.addText)
+                        }
+
+                        builder.append(textFieldValue.text.substring(deleteEnd))
+                        builder.toAnnotatedString()
+                    }
+
+                    else -> if (textFieldValue.text == baseHighlightedCode.text) baseHighlightedCode 
+                            else androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
+                }
             }
-
-            else -> baseHighlightedCode
         }
     }
+
 
     val codeTextStyle = remember(fontSize) {
         TextStyle(
@@ -1365,8 +1395,12 @@ fun CodeEditor(
                 BasicTextField(
                     value = textFieldValue,
                     onValueChange = { tfv ->
-                        // If only selection changed, update quickly and skip heavy logic
-                        if (tfv.text == textFieldValue.text) {
+                        val textChanged = tfv.text != textFieldValue.text
+                        val selectionChanged = tfv.selection != textFieldValue.selection
+
+                        if (!textChanged && !selectionChanged) return@BasicTextField
+
+                        if (!textChanged) {
                             textFieldValue = tfv
                             onSelectionChange(tfv.selection)
                             return@BasicTextField
@@ -1377,7 +1411,6 @@ fun CodeEditor(
                         var newCursor = newSelection.start
                         
                         // Auto-closing brackets
-                        // Add tfv.composition == null to avoid interfering with IME autocorrect
                         if (tfv.composition == null && newText.length == textFieldValue.text.length + 1 && newCursor > 0) {
                             val insertedChar = newText[newCursor - 1]
                             val closingChar = when (insertedChar) {
@@ -1397,12 +1430,10 @@ fun CodeEditor(
                         val newTfv = androidx.compose.ui.text.input.TextFieldValue(newText, newSelection)
                         textFieldValue = newTfv
                         
-                        // Use a side effect for external sync to avoid blocking the input loop
                         onSelectionChange(newSelection)
-                        if (newText != code) {
-                            onCodeChange(newText)
-                        }
+                        onCodeChange(newText)
                     },
+
                     onTextLayout = { layoutResult ->
                         val cursorPosition = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
                         val newCursorRect = layoutResult.getCursorRect(cursorPosition)
@@ -2172,67 +2203,6 @@ fun HtmlPreviewDialog(
 
 // Syntax Highlighter - highlights code text
 object SyntaxHighlighter {
-    fun highlight(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
-        return buildAnnotatedString {
-            val tokens = tokenize(code, language)
-            for (token in tokens) {
-                withStyle(SpanStyle(color = token.color)) {
-                    append(token.text)
-                }
-            }
-        }
-    }
-
-    private data class Token(val text: String, val color: Color)
-
-    private fun tokenize(code: String, language: Language): List<Token> {
-        val tokens = mutableListOf<Token>()
-        val patterns = when (language) {
-            Language.PYTHON -> pythonPatterns
-            Language.JAVASCRIPT -> jsPatterns
-            Language.HTML -> htmlPatterns
-            Language.CSS -> cssPatterns
-            Language.JAVA -> javaPatterns
-            Language.CPP -> cppPatterns
-            Language.KOTLIN -> kotlinPatterns
-            Language.JSON -> jsonPatterns
-        }
-
-        val matchers = patterns.map { it.first.toPattern().matcher(code) to it.second }
-        var index = 0
-        val length = code.length
-
-        while (index < length) {
-            var bestMatchStart = length
-            var bestMatchEnd = length
-            var bestColor = colorDefault
-
-            for ((matcher, color) in matchers) {
-                matcher.region(index, length)
-                if (matcher.find()) {
-                    if (matcher.start() < bestMatchStart) {
-                        bestMatchStart = matcher.start()
-                        bestMatchEnd = matcher.end()
-                        bestColor = color
-                    }
-                }
-            }
-
-            if (bestMatchStart > index) {
-                tokens.add(Token(code.substring(index, bestMatchStart), colorDefault))
-            }
-
-            if (bestMatchStart < length) {
-                tokens.add(Token(code.substring(bestMatchStart, bestMatchEnd), bestColor))
-                index = bestMatchEnd
-            } else {
-                break
-            }
-        }
-        return tokens
-    }
-
-    // Colors
     private val colorKeyword = Color(0xFF569CD6)
     private val colorString = Color(0xFFCE9178)
     private val colorComment = Color(0xFF6A9955)
@@ -2245,98 +2215,139 @@ object SyntaxHighlighter {
     private val colorDefault = Color(0xFFCDD9E5)
     private val colorPreprocessor = Color(0xFFC586C0)
 
-    private val pythonPatterns = listOf(
-        Regex("(#.*)") to colorComment,
-        Regex("(\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?''')") to colorString,
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')") to colorString,
-        Regex("\\b(def|class|if|elif|else|for|while|try|except|finally|with|as|import|from|return|yield|pass|break|continue|and|or|not|in|is|lambda|global|nonlocal|del|raise|assert|True|False|None|async|await)\\b") to colorKeyword,
-        Regex("\\b(print|len|range|type|int|str|float|bool|list|dict|set|tuple|input|open|enumerate|zip|map|filter|sorted|reversed|any|all|max|min|sum|abs|round|isinstance|issubclass|super|property|staticmethod|classmethod)\\b") to colorType,
-        Regex("\\b(0x[0-9A-Fa-f]+|\\d+\\.\\d*|\\.\\d+|\\d+)\\b") to colorNumber,
-        Regex("\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()") to colorFunction,
-        Regex("(@\\w+)") to colorPreprocessor,
-        Regex("[+\\-*/=<>!&|^~%@]") to colorOperator,
+    private val patternsMap = mapOf(
+        Language.PYTHON to listOf(
+            "COMMENT" to "#.*",
+            "STRING" to "\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?'''|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'",
+            "KEYWORD" to "\\b(def|class|if|elif|else|for|while|try|except|finally|with|as|import|from|return|yield|pass|break|continue|and|or|not|in|is|lambda|global|nonlocal|del|raise|assert|True|False|None|async|await)\\b",
+            "TYPE" to "\\b(print|len|range|type|int|str|float|bool|list|dict|set|tuple|input|open|enumerate|zip|map|filter|sorted|reversed|any|all|max|min|sum|abs|round|isinstance|issubclass|super|property|staticmethod|classmethod)\\b",
+            "NUMBER" to "\\b(0x[0-9A-Fa-f]+|\\d+\\.\\d*|\\.\\d+|\\d+)\\b",
+            "FUNCTION" to "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()",
+            "PREPROCESSOR" to "@\\w+",
+            "OPERATOR" to "[+\\-*/=<>!&|^~%@]"
+        ),
+        Language.JAVASCRIPT to listOf(
+            "COMMENT" to "//.*|/\\*[\\s\\S]*?\\*/",
+            "STRING" to "`(?:[^`\\\\]|\\\\.)*`|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'",
+            "KEYWORD" to "\\b(var|let|const|function|class|if|else|for|while|do|try|catch|finally|return|throw|new|delete|typeof|instanceof|in|of|break|continue|switch|case|default|import|export|from|async|await|yield|extends|super|this|null|undefined|true|false|void)\\b",
+            "TYPE" to "\\b(console|Math|Array|Object|String|Number|Boolean|Date|JSON|Promise|fetch|document|window|localStorage|sessionStorage|setTimeout|setInterval|clearTimeout|clearInterval|parseInt|parseFloat|isNaN|isFinite)\\b",
+            "NUMBER" to "\\b(0x[0-9A-Fa-f]+|\\d+\\.\\d*|\\.\\d+|\\d+)\\b",
+            "FUNCTION" to "\\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\\s*\\()",
+            "OPERATOR" to "=>|[+\\-*/=<>!&|^~%]"
+        ),
+        Language.HTML to listOf(
+            "COMMENT" to "<!--[\\s\\S]*?-->",
+            "TAG" to "</?[a-zA-Z][a-zA-Z0-9]*|/?>",
+            "ATTR" to "[a-zA-Z-]+(?=\\s*=)",
+            "STRING" to "\"[^\"]*\"|'[^']*'",
+            "PREPROCESSOR" to "&[a-zA-Z]+;|&#\\d+;"
+        ),
+        Language.CSS to listOf(
+            "COMMENT" to "/\\*[\\s\\S]*?\\*/|//.*",
+            "FUNCTION" to "[.#][a-zA-Z][a-zA-Z0-9_-]*",
+            "ATTR" to "\\b([a-zA-Z-]+)(?=\\s*:)",
+            "STRING" to "\"[^\"]*\"|'[^']*'|#[0-9A-Fa-f]{3,8}\\b",
+            "NUMBER" to "\\b(\\d+\\.?\\d*)(px|em|rem|vh|vw|%|pt|cm|mm|ex|ch|vmin|vmax)?\\b",
+            "KEYWORD" to "\\b(important|px|em|rem|vh|vw|none|auto|block|flex|grid|inline|absolute|relative|fixed|sticky|inherit|initial|unset)\\b",
+            "PREPROCESSOR" to "@[a-zA-Z-]+"
+        ),
+        Language.JAVA to listOf(
+            "COMMENT" to "//.*|/\\*[\\s\\S]*?\\*/",
+            "STRING" to "\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'",
+            "KEYWORD" to "\\b(abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|goto|if|implements|import|instanceof|int|interface|long|native|new|null|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while|true|false)\\b",
+            "TYPE" to "\\b(String|Integer|Long|Double|Float|Boolean|Character|Byte|Short|Object|System|Math|Arrays|ArrayList|HashMap|List|Map|Set|Iterator|Scanner|PrintStream|StringBuilder|StringBuffer)\\b|[A-Z][a-zA-Z0-9]*\\b",
+            "NUMBER" to "\\b(0x[0-9A-Fa-f]+L?|\\d+\\.\\d*[fFdD]?|\\.\\d+[fFdD]?|\\d+[lLfFdD]?)\\b",
+            "FUNCTION" to "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()",
+            "PREPROCESSOR" to "@[A-Za-z]+"
+        ),
+        Language.CPP to listOf(
+            "COMMENT" to "//.*|/\\*[\\s\\S]*?\\*/",
+            "STRING" to "\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'",
+            "PREPROCESSOR" to "#\\s*(?:include|define|ifdef|ifndef|endif|else|elif|pragma|undef)\\b[^\\n]*",
+            "KEYWORD" to "\\b(auto|bool|break|case|catch|char|class|const|continue|default|delete|do|double|else|enum|explicit|extern|false|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|nullptr|operator|private|protected|public|register|return|short|signed|sizeof|static|struct|switch|template|this|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)\\b",
+            "TYPE" to "\\b(std|cout|cin|endl|string|vector|map|set|pair|array|queue|stack|algorithm|iostream|fstream|sstream)\\b",
+            "NUMBER" to "\\b(0x[0-9A-Fa-f]+[uUlL]*|\\d+\\.\\d*[fFlL]?|\\.\\d+[fFlL]?|\\d+[uUlL]*)\\b",
+            "FUNCTION" to "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()",
+            "OPERATOR" to "::"
+        ),
+        Language.KOTLIN to listOf(
+            "COMMENT" to "//.*|/\\*[\\s\\S]*?\\*/",
+            "STRING" to "\"\"\"[\\s\\S]*?\"\"\"|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'",
+            "KEYWORD" to "\\b(abstract|actual|annotation|as|break|by|catch|class|companion|const|constructor|continue|crossinline|data|delegate|do|dynamic|else|enum|expect|external|false|final|finally|for|fun|get|if|import|in|infix|init|inline|inner|interface|internal|is|it|lateinit|noinline|null|object|open|operator|out|override|package|private|protected|public|reified|return|sealed|set|super|suspend|tailrec|this|throw|true|try|typealias|typeof|val|var|vararg|when|where|while)\\b",
+            "TYPE" to "\\b(String|Int|Long|Double|Float|Boolean|Char|Byte|Short|Any|Unit|Nothing|Array|List|MutableList|Map|MutableMap|Set|MutableSet|Pair|Triple|Sequence|Flow|StateFlow|println|print|readLine|TODO)\\b",
+            "NUMBER" to "\\b(0x[0-9A-Fa-f]+[lLuU]*|\\d+\\.\\d*[fF]?|\\.\\d+[fF]?|\\d+[lLuU]*)\\b",
+            "FUNCTION" to "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()",
+            "PREPROCESSOR" to "@[A-Za-z]+"
+        ),
+        Language.JSON to listOf(
+            "ATTR" to "\"(?:[^\"\\\\]|\\\\.)*\"(?=\\s*:)",
+            "STRING" to "\"(?:[^\"\\\\]|\\\\.)*\"",
+            "KEYWORD" to "\\b(true|false|null)\\b",
+            "NUMBER" to "\\b(-?\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)\\b",
+            "OPERATOR" to "[{\\[\\]},:]"
+        )
     )
 
-    private val jsPatterns = listOf(
-        Regex("(//.*)") to colorComment,
-        Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
-        Regex("(`(?:[^`\\\\]|\\\\.)*`)") to colorString,
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')") to colorString,
-        Regex("\\b(var|let|const|function|class|if|else|for|while|do|try|catch|finally|return|throw|new|delete|typeof|instanceof|in|of|break|continue|switch|case|default|import|export|from|async|await|yield|extends|super|this|null|undefined|true|false|void)\\b") to colorKeyword,
-        Regex("\\b(console|Math|Array|Object|String|Number|Boolean|Date|JSON|Promise|fetch|document|window|localStorage|sessionStorage|setTimeout|setInterval|clearTimeout|clearInterval|parseInt|parseFloat|isNaN|isFinite)\\b") to colorType,
-        Regex("\\b(0x[0-9A-Fa-f]+|\\d+\\.\\d*|\\.\\d+|\\d+)\\b") to colorNumber,
-        Regex("\\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\\s*\\()") to colorFunction,
-        Regex("(=>)") to colorKeyword,
-        Regex("[+\\-*/=<>!&|^~%]") to colorOperator,
+    private val colorMap = mapOf(
+        "KEYWORD" to colorKeyword,
+        "STRING" to colorString,
+        "COMMENT" to colorComment,
+        "NUMBER" to colorNumber,
+        "FUNCTION" to colorFunction,
+        "TYPE" to colorType,
+        "OPERATOR" to colorOperator,
+        "TAG" to colorTag,
+        "ATTR" to colorAttr,
+        "PREPROCESSOR" to colorPreprocessor
     )
 
-    private val htmlPatterns = listOf(
-        Regex("(<!--[\\s\\S]*?-->)") to colorComment,
-        Regex("(</?[a-zA-Z][a-zA-Z0-9]*)") to colorTag,
-        Regex("(/?>)") to colorTag,
-        Regex("([a-zA-Z-]+)(?=\\s*=)") to colorAttr,
-        Regex("(\"[^\"]*\"|'[^']*')") to colorString,
-        Regex("(&[a-zA-Z]+;|&#\\d+;)") to colorPreprocessor,
-    )
+    private val compiledPatterns = Language.values().associateWith { lang ->
+        val patterns = patternsMap[lang] ?: emptyList()
+        val combined = patterns.joinToString("|") { (name, pattern) -> "(?<$name>$pattern)" }
+        java.util.regex.Pattern.compile(combined)
+    }
 
-    private val cssPatterns = listOf(
-        Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
-        Regex("(//.*$)", RegexOption.MULTILINE) to colorComment,
-        Regex("([.#][a-zA-Z][a-zA-Z0-9_-]*)") to colorFunction,
-        Regex("\\b([a-zA-Z-]+)(?=\\s*:)") to colorAttr,
-        Regex("(\"[^\"]*\"|'[^']*')") to colorString,
-        Regex("(#[0-9A-Fa-f]{3,8}\\b)") to colorString,
-        Regex("\\b(\\d+\\.?\\d*)(px|em|rem|vh|vw|%|pt|cm|mm|ex|ch|vmin|vmax)?\\b") to colorNumber,
-        Regex("\\b(important|px|em|rem|vh|vw|none|auto|block|flex|grid|inline|absolute|relative|fixed|sticky|inherit|initial|unset)\\b") to colorKeyword,
-        Regex("(@[a-zA-Z-]+)") to colorPreprocessor,
-    )
-
-    private val javaPatterns = listOf(
-        Regex("(//.*)") to colorComment,
-        Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\")") to colorString,
-        Regex("('(?:[^'\\\\]|\\\\.)*')") to colorString,
-        Regex("\\b(abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|goto|if|implements|import|instanceof|int|interface|long|native|new|null|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while|true|false)\\b") to colorKeyword,
-        Regex("\\b(String|Integer|Long|Double|Float|Boolean|Character|Byte|Short|Object|System|Math|Arrays|ArrayList|HashMap|List|Map|Set|Iterator|Scanner|PrintStream|StringBuilder|StringBuffer)\\b") to colorType,
-        Regex("\\b(0x[0-9A-Fa-f]+L?|\\d+\\.\\d*[fFdD]?|\\.\\d+[fFdD]?|\\d+[lLfFdD]?)\\b") to colorNumber,
-        Regex("\\b([A-Z][a-zA-Z0-9]*)\\b") to colorType,
-        Regex("\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()") to colorFunction,
-        Regex("(@[A-Za-z]+)") to colorPreprocessor,
-    )
-
-    private val cppPatterns = listOf(
-        Regex("(//.*)") to colorComment,
-        Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')") to colorString,
-        Regex("(#\\s*(?:include|define|ifdef|ifndef|endif|else|elif|pragma|undef)\\b[^\\n]*)") to colorPreprocessor,
-        Regex("\\b(auto|bool|break|case|catch|char|class|const|continue|default|delete|do|double|else|enum|explicit|extern|false|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|nullptr|operator|private|protected|public|register|return|short|signed|sizeof|static|struct|switch|template|this|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)\\b") to colorKeyword,
-        Regex("\\b(std|cout|cin|endl|string|vector|map|set|pair|array|queue|stack|algorithm|iostream|fstream|sstream)\\b") to colorType,
-        Regex("\\b(0x[0-9A-Fa-f]+[uUlL]*|\\d+\\.\\d*[fFlL]?|\\.\\d+[fFlL]?|\\d+[uUlL]*)\\b") to colorNumber,
-        Regex("\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()") to colorFunction,
-        Regex("(::)") to colorOperator,
-    )
-
-    private val kotlinPatterns = listOf(
-        Regex("(//.*)") to colorComment,
-        Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
-        Regex("(\"\"\"[\\s\\S]*?\"\"\")") to colorString,
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\")") to colorString,
-        Regex("('(?:[^'\\\\]|\\\\.)*')") to colorString,
-        Regex("\\b(abstract|actual|annotation|as|break|by|catch|class|companion|const|constructor|continue|crossinline|data|delegate|do|dynamic|else|enum|expect|external|false|final|finally|for|fun|get|if|import|in|infix|init|inline|inner|interface|internal|is|it|lateinit|noinline|null|object|open|operator|out|override|package|private|protected|public|reified|return|sealed|set|super|suspend|tailrec|this|throw|true|try|typealias|typeof|val|var|vararg|when|where|while)\\b") to colorKeyword,
-        Regex("\\b(String|Int|Long|Double|Float|Boolean|Char|Byte|Short|Any|Unit|Nothing|Array|List|MutableList|Map|MutableMap|Set|MutableSet|Pair|Triple|Sequence|Flow|StateFlow|println|print|readLine|TODO)\\b") to colorType,
-        Regex("\\b(0x[0-9A-Fa-f]+[lLuU]*|\\d+\\.\\d*[fF]?|\\.\\d+[fF]?|\\d+[lLuU]*)\\b") to colorNumber,
-        Regex("\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()") to colorFunction,
-        Regex("(@[A-Za-z]+)") to colorPreprocessor,
-    )
-
-    private val jsonPatterns = listOf(
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\")(?=\\s*:)") to colorAttr,
-        Regex("(\"(?:[^\"\\\\]|\\\\.)*\")") to colorString,
-        Regex("\\b(true|false|null)\\b") to colorKeyword,
-        Regex("\\b(-?\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)\\b") to colorNumber,
-        Regex("[{\\[\\]},:]") to colorOperator,
-    )
+    fun highlight(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
+        val pattern = compiledPatterns[language] ?: return androidx.compose.ui.text.AnnotatedString(code)
+        val matcher = pattern.matcher(code)
+        
+        return buildAnnotatedString {
+            var lastEnd = 0
+            while (matcher.find()) {
+                if (matcher.start() > lastEnd) {
+                    withStyle(SpanStyle(color = colorDefault)) {
+                        append(code.substring(lastEnd, matcher.start()))
+                    }
+                }
+                
+                var matched = false
+                for (name in colorMap.keys) {
+                    try {
+                        val groupText = matcher.group(name)
+                        if (groupText != null) {
+                            withStyle(SpanStyle(color = colorMap[name] ?: colorDefault)) {
+                                append(groupText)
+                            }
+                            matched = true
+                            break
+                        }
+                    } catch (_: Exception) {}
+                }
+                
+                if (!matched) {
+                    append(matcher.group())
+                }
+                lastEnd = matcher.end()
+            }
+            if (lastEnd < code.length) {
+                withStyle(SpanStyle(color = colorDefault)) {
+                    append(code.substring(lastEnd))
+                }
+            }
+        }
+    }
 }
+
 
 
 /**
