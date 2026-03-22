@@ -62,6 +62,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.KeyEventType
@@ -518,14 +519,26 @@ private fun EditorMainContent(
             modifier = Modifier.weight(1f)
         )
 
-        val terminalModifier by remember { derivedStateOf {
-            if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
-        }}
-        EditorTerminalSection(
-            viewModel = viewModel,
-            uiState = uiState,
-            modifier = terminalModifier
-        )
+        AnimatedVisibility(
+            visible = uiState.showTerminal,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it }),
+            modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
+        ) {
+            Surface(
+                tonalElevation = 8.dp,
+                shadowElevation = 16.dp,
+                shape = if (uiState.isTerminalFullScreen) RectangleShape else RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                EditorTerminalSection(
+                    viewModel = viewModel,
+                    uiState = uiState,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
 
         KeyboardAwareSpecialCharactersBar(
             onCharacterClick = onCharacterClick
@@ -560,7 +573,11 @@ private fun EditorEditorSection(
 ) {
     val isFullScreen by remember { derivedStateOf { uiState.isTerminalFullScreen } }
     if (!isFullScreen) {
-        Box(modifier = modifier) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
             EditorWorkArea(
                 viewModel = viewModel,
                 settingsViewModel = settingsViewModel,
@@ -584,26 +601,73 @@ private fun EditorFileTabs(
         return
     }
 
-    androidx.compose.material3.ScrollableTabRow(
-        selectedTabIndex = activeFileIndex,
-        edgePadding = 8.dp,
-        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        files.forEachIndexed { index, file ->
-            key(file.id) {
-                androidx.compose.material3.Tab(
-                    selected = activeFileIndex == index,
-                    onClick = { onSwitchFile(index) },
-                    text = { Text(file.name) }
-                )
+        androidx.compose.material3.ScrollableTabRow(
+            selectedTabIndex = activeFileIndex,
+            edgePadding = 0.dp,
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.primary,
+            divider = {},
+            indicator = { tabPositions ->
+                if (activeFileIndex < tabPositions.size) {
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[activeFileIndex]),
+                        color = MaterialTheme.colorScheme.primary,
+                        height = 2.dp
+                    )
+                }
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            files.forEachIndexed { index, file ->
+                val selected = activeFileIndex == index
+                key(file.id) {
+                    androidx.compose.material3.Tab(
+                        selected = selected,
+                        onClick = { onSwitchFile(index) },
+                        modifier = Modifier
+                            .height(48.dp)
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                else Color.Transparent
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = file.language.icon,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+                            Text(
+                                text = file.name,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
             }
         }
-        androidx.compose.material3.Tab(
-            selected = false,
+        
+        IconButton(
             onClick = onAddFile,
-            text = { Icon(Icons.Default.Add, "Add File") }
-        )
+            modifier = Modifier.padding(horizontal = 4.dp)
+        ) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = "Add File",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -731,6 +795,7 @@ private fun EditorCodePane(
     val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
     val fontSize by settingsViewModel.fontSize.collectAsStateWithLifecycle()
     val lineNumbers by settingsViewModel.lineNumbers.collectAsStateWithLifecycle()
+    val tabSize by settingsViewModel.tabSize.collectAsStateWithLifecycle()
     val autocompleteEnabled by settingsViewModel.autocomplete.collectAsStateWithLifecycle()
     val wordWrap by settingsViewModel.wordWrap.collectAsStateWithLifecycle()
     val ghostSuggestion by viewModel.ghostSuggestion.collectAsStateWithLifecycle()
@@ -787,6 +852,7 @@ private fun EditorCodePane(
         language = language,
         fontSize = fontSize,
         lineNumbers = lineNumbers,
+        tabSize = tabSize,
         wordWrap = wordWrap,
         autocompleteEnabled = autocompleteEnabled,
         ghostSuggestion = ghostSuggestion,
@@ -826,26 +892,19 @@ private fun EditorTerminalSection(
     }
     val onShowHtmlPreview = remember(uiState) { { uiState.showHtmlPreview = true } }
 
-    AnimatedVisibility(
-        visible = uiState.showTerminal,
-        enter = slideInVertically(initialOffsetY = { it }),
-        exit = slideOutVertically(targetOffsetY = { it }),
-        modifier = modifier
-    ) {
-        val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
-        val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
 
-        TerminalPanel(
-            terminalManager = viewModel.terminalManager,
-            isFullScreen = uiState.isTerminalFullScreen,
-            onToggleFullScreen = onToggleFullScreen,
-            onClear = onClearTerminal,
-            onClose = onCloseTerminal,
-            onShowHtml = if (language == Language.HTML && htmlContent != null) onShowHtmlPreview else null,
-            onSendInput = onSendInput,
-            modifier = if (uiState.isTerminalFullScreen) Modifier.fillMaxSize() else Modifier
-        )
-    }
+    TerminalPanel(
+        terminalManager = viewModel.terminalManager,
+        isFullScreen = uiState.isTerminalFullScreen,
+        onToggleFullScreen = onToggleFullScreen,
+        onClear = onClearTerminal,
+        onClose = onCloseTerminal,
+        onShowHtml = if (language == Language.HTML && htmlContent != null) onShowHtmlPreview else null,
+        onSendInput = onSendInput,
+        modifier = if (uiState.isTerminalFullScreen) Modifier.fillMaxSize() else modifier
+    )
 }
 
 @Composable
@@ -1158,6 +1217,7 @@ fun CodeEditor(
     language: Language,
     fontSize: Int,
     lineNumbers: Boolean,
+    tabSize: Int = 4,
     wordWrap: Boolean = false,
     autocompleteEnabled: Boolean = true,
     ghostSuggestion: String? = null,
@@ -1400,8 +1460,37 @@ fun CodeEditor(
                         var newSelection = tfv.selection
                         var newCursor = newSelection.start
                         
-                        // Auto-closing brackets
-                        if (tfv.composition == null && newText.length == textFieldValue.text.length + 1 && newCursor > 0) {
+                        // Handle Enter key / Newline for auto-indentation
+                        if (newText.length == textFieldValue.text.length + 1 && 
+                            newCursor > 0 && newText[newCursor - 1] == '\n') {
+                            
+                            val textBeforeCursor = newText.substring(0, newCursor - 1)
+                            val lastNewLineIndex = textBeforeCursor.lastIndexOf('\n')
+                            val lastLine = textBeforeCursor.substring(lastNewLineIndex + 1)
+                            
+                            // Calculate leading whitespace of the last line
+                            val leadingWhitespace = lastLine.takeWhile { it.isWhitespace() }
+                            var indent = leadingWhitespace
+                            
+                            // Smart Indent triggers
+                            val trimmedLastLine = lastLine.trim()
+                            val shouldIndentMore = when (language) {
+                                Language.PYTHON -> trimmedLastLine.endsWith(":")
+                                Language.KOTLIN, Language.JAVA, Language.JAVASCRIPT, Language.CPP, Language.CSS -> 
+                                    trimmedLastLine.endsWith("{")
+                                Language.HTML -> trimmedLastLine.endsWith(">") && !trimmedLastLine.startsWith("</") && !trimmedLastLine.endsWith("/>")
+                                else -> false
+                            }
+                            
+                            if (shouldIndentMore) {
+                                indent += " ".repeat(tabSize)
+                            }
+                            
+                            newText = textBeforeCursor + "\n" + indent + newText.substring(newCursor)
+                            newSelection = androidx.compose.ui.text.TextRange(newCursor + indent.length)
+                        } 
+                        // Auto-closing brackets (existing logic refined)
+                        else if (tfv.composition == null && newText.length == textFieldValue.text.length + 1 && newCursor > 0) {
                             val insertedChar = newText[newCursor - 1]
                             val closingChar = when (insertedChar) {
                                 '(' -> ")"
@@ -1412,8 +1501,12 @@ fun CodeEditor(
                                 else -> null
                             }
                             if (closingChar != null) {
-                                newText = newText.substring(0, newCursor) + closingChar + newText.substring(newCursor)
-                                newSelection = androidx.compose.ui.text.TextRange(newCursor)
+                                // Only auto-close if we are NOT immediately before the same closing char
+                                val charAfter = if (newCursor < newText.length) newText[newCursor] else null
+                                if (charAfter?.toString() != closingChar) {
+                                    newText = newText.substring(0, newCursor) + closingChar + newText.substring(newCursor)
+                                    newSelection = androidx.compose.ui.text.TextRange(newCursor)
+                                }
                             }
                         }
                         
@@ -1493,8 +1586,54 @@ fun CodeEditor(
                         }
                         .onKeyEvent { keyEvent ->
                             if (keyEvent.type == KeyEventType.KeyDown) {
-                                // Tab to accept suggestion
+                                // Tab key handling - insert spaces instead of focus change
                                 if (keyEvent.key == Key.Tab) {
+                                    val cursor = textFieldValue.selection.start
+                                    val selection = textFieldValue.selection
+                                    
+                                    if (selection.collapsed) {
+                                        // Insert tabSize spaces
+                                        val spaces = " ".repeat(tabSize)
+                                        val newText = textFieldValue.text.substring(0, cursor) + spaces + textFieldValue.text.substring(cursor)
+                                        val newSelection = androidx.compose.ui.text.TextRange(cursor + spaces.length)
+                                        
+                                        textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, newSelection)
+                                        onCodeChange(newText)
+                                        onSelectionChange(newSelection)
+                                    } else {
+                                        // Indent selection
+                                        val startLine = textFieldValue.text.substring(0, selection.start).count { it == '\n' }
+                                        val endLine = textFieldValue.text.substring(0, selection.end).count { it == '\n' }
+                                        val lines = textFieldValue.text.lines().toMutableList()
+                                        
+                                        for (i in startLine..endLine) {
+                                            if (keyEvent.isShiftPressed) {
+                                                // Un-indent (Shift + Tab)
+                                                if (lines[i].startsWith(" ".repeat(tabSize))) {
+                                                    lines[i] = lines[i].substring(tabSize)
+                                                } else if (lines[i].startsWith("\t")) {
+                                                    lines[i] = lines[i].substring(1)
+                                                } else {
+                                                    lines[i] = lines[i].trimStart().let { trimmed ->
+                                                        val removed = lines[i].length - trimmed.length
+                                                        lines[i].substring(minOf(removed, tabSize))
+                                                    }
+                                                }
+                                            } else {
+                                                // Indent (Tab)
+                                                lines[i] = " ".repeat(tabSize) + lines[i]
+                                            }
+                                        }
+                                        
+                                        val newText = lines.joinToString("\n")
+                                        textFieldValue = textFieldValue.copy(text = newText)
+                                        onCodeChange(newText)
+                                    }
+                                    return@onKeyEvent true
+                                }
+                                
+                                // Tab to accept suggestion (existing logic)
+                                if (keyEvent.key == Key.Tab && (ghostSuggestion != null || inlineDiffSuggestion != null)) {
                                     if (ghostSuggestion != null) {
                                         val newCode = textFieldValue.text.substring(0, textFieldValue.selection.start) + ghostSuggestion!! + textFieldValue.text.substring(textFieldValue.selection.start)
                                         onCodeChange(newCode)
@@ -1895,43 +2034,66 @@ fun FindReplaceBar(
     onReplace: () -> Unit,
     onClose: () -> Unit
 ) {
-    val fieldTextStyle = remember {
-        TextStyle(
-            fontFamily = FontFamily.Monospace,
-            fontSize = 13.sp
-        )
-    }
-
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = findText,
-                    onValueChange = onFindChange,
-                    placeholder = { Text("Find", style = MaterialTheme.typography.bodySmall) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    textStyle = fieldTextStyle
+        Row(
+            modifier = Modifier
+                .padding(8.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = findText,
+                onValueChange = onFindChange,
+                placeholder = { Text("Find", style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                 )
-                Spacer(Modifier.width(4.dp))
-                OutlinedTextField(
-                    value = replaceText,
-                    onValueChange = onReplaceChange,
-                    placeholder = { Text("Replace", style = MaterialTheme.typography.bodySmall) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    textStyle = fieldTextStyle
+            )
+            
+            OutlinedTextField(
+                value = replaceText,
+                onValueChange = onReplaceChange,
+                placeholder = { Text("Replace", style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                 )
-                Spacer(Modifier.width(4.dp))
-                Button(onClick = onReplace, modifier = Modifier.height(48.dp)) {
-                    Text("Replace")
-                }
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, "Close")
-                }
+            )
+
+            FilledTonalButton(
+                onClick = onReplace,
+                enabled = findText.isNotBlank(),
+                modifier = Modifier.height(40.dp),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp)
+            ) {
+                Text("Replace", style = MaterialTheme.typography.labelMedium)
+            }
+
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(Icons.Default.Close, "Close Find/Replace", modifier = Modifier.size(18.dp))
             }
         }
     }

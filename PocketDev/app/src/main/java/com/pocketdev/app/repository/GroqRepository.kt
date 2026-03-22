@@ -146,7 +146,10 @@ class GroqRepository {
                 val addMatch = Regex("ADD:\\s*(.+?)(?=\\nTYPE:|$)", RegexOption.DOT_MATCHES_ALL).find(content)
                 
                 val deleteText = deleteMatch?.groupValues?.get(1)?.trim() ?: ""
-                val addText = addMatch?.groupValues?.get(1)?.trim() ?: ""
+                var addText = addMatch?.groupValues?.get(1)?.trim() ?: ""
+                
+                // Handle escaped newlines
+                addText = addText.replace("\\n", "\n")
                 
                 // Find the position of the text to delete
                 val deletePos = code.indexOf(deleteText, maxOf(0, cursorPosition - deleteText.length - 50))
@@ -163,7 +166,11 @@ class GroqRepository {
             } else {
                 // Simple APPEND type
                 val suggestionMatch = Regex("SUGGESTION:\\s*(.+?)(?=\\nTYPE:|$)", RegexOption.DOT_MATCHES_ALL).find(content)
-                val suggestion = suggestionMatch?.groupValues?.get(1)?.trim() ?: content.trim()
+                var suggestion = suggestionMatch?.groupValues?.get(1)?.trim() ?: content.substringAfter("SUGGESTION:").trim()
+                
+                // Handle escaped newlines
+                suggestion = suggestion.replace("\\n", "\n")
+                
                 result.copy(content = suggestion, isEdit = false)
             }
         } else {
@@ -445,8 +452,23 @@ class GroqRepository {
     }
 
     private fun extractCodeBlock(content: String): String? {
-        val codeBlockRegex = Regex("```[\\w]*\\n([\\s\\S]*?)```")
-        val match = codeBlockRegex.find(content)
-        return match?.groupValues?.get(1)?.trim() ?: content.trim()
+        val trimmedContent = content.trim()
+        
+        // 1. Triple backticks with language: ```kotlin [code] ```
+        val tripleWithLang = Regex("```[\\w]*\\n?([\\s\\S]*?)```")
+        val tripleMatch = tripleWithLang.find(trimmedContent)
+        if (tripleMatch != null) {
+            return tripleMatch.groupValues[1].trim()
+        }
+        
+        // 2. Single backticks: `[code]`
+        val singleBacktick = Regex("`([^`]+)`")
+        val singleMatch = singleBacktick.find(trimmedContent)
+        if (singleMatch != null) {
+            return singleMatch.groupValues[1].trim()
+        }
+        
+        // 3. Just content, but remove any accidental trailing backticks the AI might have left
+        return trimmedContent.removeSurrounding("```").removeSurrounding("`").trim()
     }
 }
