@@ -1198,13 +1198,26 @@ fun CodeEditor(
         }
     }
 
+    // Use a stable highlighter state that persists across recompositions
+    val highlighterState = remember { SyntaxHighlighterState() }
     var baseHighlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
-
+    
+    // Track previous code to detect actual changes
+    var previousCode by remember { mutableStateOf(textFieldValue.text) }
+    
     LaunchedEffect(textFieldValue.text, language) {
-        // Highlighting is now fast enough to run without a large delay
-        // We still use a tiny delay to debounce very rapid typing if needed, but let's try 0 first for "instant" feel
-        baseHighlightedCode = withContext(Dispatchers.Default) {
-            SyntaxHighlighter.highlight(textFieldValue.text, language)
+        // Only process if code actually changed
+        if (textFieldValue.text != previousCode || highlighterState.currentLanguage != language) {
+            previousCode = textFieldValue.text
+            highlighterState.currentLanguage = language
+            
+            // Debounce: small delay to batch rapid typing
+            delay(16) // ~60fps, feels instant but batches rapid keystrokes
+            
+            baseHighlightedCode = withContext(Dispatchers.Default) {
+                // Incremental highlight - only process changed lines
+                highlighterState.highlightIncremental(textFieldValue.text, language)
+            }
         }
     }
 
@@ -2201,6 +2214,152 @@ fun HtmlPreviewDialog(
     }
 }
 
+/**
+ * Stateful highlighter that maintains a line cache for incremental updates.
+ * Only re-highlights lines that have changed, significantly improving performance.
+ */
+class SyntaxHighlighterState {
+    private val lineCache = mutableStateListOf<HighlightedLine>()
+    var currentLanguage: Language? = null
+        set(value) {
+            if (field != value) {
+                // Language changed, clear cache
+                lineCache.clear()
+            }
+            field = value
+        }
+    
+    private var cachedCode: String = ""
+    private var cachedResult: androidx.compose.ui.text.AnnotatedString? = null
+    
+    /**
+     * Incrementally highlights only changed lines.
+     * Uses a line-by-line cache to avoid re-highlighting unchanged content.
+     */
+    fun highlightIncremental(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
+        // Check if we can use cached result
+        if (code == cachedCode && cachedResult != null && currentLanguage == language) {
+            return cachedResult!!
+        }
+        
+        val newLines = code.split('\n')
+        val oldLines = if (lineCache.isNotEmpty()) lineCache.map { it.text } else emptyList()
+        
+        // Find the range of changed lines
+        val (changeStart, changeEnd) = findChangedRange(oldLines, newLines)
+        
+        // If only a small portion changed, do incremental update
+        if (changeStart < newLines.size && lineCache.isNotEmpty() && oldLines.size == newLines.size) {
+            // Incremental update: only re-highlight changed lines
+            var currentState = if (changeStart > 0) lineCache[changeStart - 1].endState else MultiLineState.NORMAL
+            
+            for (i in changeStart..changeEnd.coerceAtMost(newLines.size - 1)) {
+                val (annotated, nextState) = SyntaxHighlighter.highlightLine(newLines[i], language, currentState)
+                if (i < lineCache.size) {
+                    lineCache[i] = HighlightedLine(newLines[i], annotated, nextState)
+                } else {
+                    lineCache.add(HighlightedLine(newLines[i], annotated, nextState))
+                }
+                currentState = nextState
+            }
+            
+            // Check if state propagation is needed (e.g., for multi-line comments)
+            propagateStateChanges(changeEnd + 1, language)
+        } else {
+            // Full rebuild needed (size changed or first run)
+            rebuildCache(newLines, language)
+        }
+        
+        cachedCode = code
+        cachedResult = joinCache()
+        return cachedResult!!
+    }
+    
+    private fun findChangedRange(oldLines: List<String>, newLines: List<String>): Pair<Int, Int> {
+        if (oldLines.isEmpty()) return 0 to newLines.size - 1
+        
+        var start = 0
+        while (start < oldLines.size && start < newLines.size && oldLines[start] == newLines[start]) {
+            start++
+        }
+        
+        if (start == oldLines.size && start == newLines.size) {
+            // No changes
+            return -1 to -1
+        }
+        
+        var end = newLines.size - 1
+        var oldEnd = oldLines.size - 1
+        while (oldEnd >= start && end >= start && oldLines[oldEnd] == newLines[end]) {
+            oldEnd--
+            end--
+        }
+        
+        return start to end
+    }
+    
+    private fun rebuildCache(lines: List<String>, language: Language) {
+        lineCache.clear()
+        var currentState = MultiLineState.NORMAL
+        for (line in lines) {
+            val (annotated, nextState) = SyntaxHighlighter.highlightLine(line, language, currentState)
+            lineCache.add(HighlightedLine(line, annotated, nextState))
+            currentState = nextState
+        }
+    }
+    
+    private fun propagateStateChanges(fromIndex: Int, language: Language) {
+        if (fromIndex <= 0 || fromIndex >= lineCache.size) return
+        
+        var currentState = lineCache[fromIndex - 1].endState
+        for (i in fromIndex until lineCache.size) {
+            val cached = lineCache[i]
+            // Quick check: if the cached end state matches current state, no need to re-highlight
+            // But we still need to verify the highlighting is correct
+            val (annotated, nextState) = SyntaxHighlighter.highlightLine(cached.text, language, currentState)
+            
+            if (annotated == cached.annotatedString && nextState == cached.endState) {
+                // State stabilized, no more propagation needed
+                break
+            }
+            
+            lineCache[i] = HighlightedLine(cached.text, annotated, nextState)
+            currentState = nextState
+        }
+    }
+    
+    private fun joinCache(): androidx.compose.ui.text.AnnotatedString {
+        return buildAnnotatedString {
+            lineCache.forEachIndexed { index, line ->
+                append(line.annotatedString)
+                if (index < lineCache.size - 1) {
+                    append("\n")
+                }
+            }
+        }
+    }
+    
+    fun clear() {
+        lineCache.clear()
+        cachedCode = ""
+        cachedResult = null
+    }
+}
+
+// Data class for cached highlighted lines
+private data class HighlightedLine(
+    val text: String,
+    val annotatedString: androidx.compose.ui.text.AnnotatedString,
+    val endState: MultiLineState
+)
+
+// Multi-line state tracking
+private enum class MultiLineState {
+    NORMAL,
+    IN_BLOCK_COMMENT,
+    IN_STRING
+}
+
 // Syntax Highlighter - highlights code text
 object SyntaxHighlighter {
     private val colorKeyword = Color(0xFF569CD6)
@@ -2215,25 +2374,7 @@ object SyntaxHighlighter {
     private val colorDefault = Color(0xFFCDD9E5)
     private val colorPreprocessor = Color(0xFFC586C0)
 
-    private enum class MultiLineState {
-        NORMAL,
-        IN_PYTHON_DOCSTRING,
-        IN_JS_COMMENT,
-        IN_HTML_COMMENT,
-        IN_CSS_COMMENT
-    }
-
-    private data class HighlightedLine(
-        val text: String,
-        val annotatedString: androidx.compose.ui.text.AnnotatedString,
-        val endState: MultiLineState
-    )
-
-    // Cache to store highlighted lines for the current file
-    private var lineCache = mutableListOf<HighlightedLine>()
-    private var lastLanguage: Language? = null
-    private var lastFullCode: String? = null
-
+    // Pre-compiled patterns for each language - created once and reused
     private val patternsMap = mapOf(
         Language.PYTHON to listOf(
             "COMMENT" to "#.*",
@@ -2320,129 +2461,42 @@ object SyntaxHighlighter {
         "PREPROCESSOR" to colorPreprocessor
     )
 
-    private val compiledPatterns = Language.values().associateWith { lang ->
-        val patterns = patternsMap[lang] ?: emptyList()
-        val combined = patterns.joinToString("|") { (name, pattern) -> "(?<$name>$pattern)" }
-        java.util.regex.Pattern.compile(combined)
-    }
-
-    fun highlight(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
-        if (code == lastFullCode && language == lastLanguage && lineCache.isNotEmpty()) {
-            return joinCache()
-        }
-
-        val lines = code.split('\n')
-        
-        // If language changed or cache is invalid, rebuild completely
-        if (language != lastLanguage || lineCache.size != lines.size && lastFullCode == null) {
-            rebuildCache(lines, language)
-        } else {
-            updateCache(lines, language)
-        }
-
-        lastLanguage = language
-        lastFullCode = code
-        return joinCache()
-    }
-
-    private fun rebuildCache(lines: List<String>, language: Language) {
-        lineCache.clear()
-        var currentState = MultiLineState.NORMAL
-        for (line in lines) {
-            val (annotated, nextState) = highlightLine(line, language, currentState)
-            lineCache.add(HighlightedLine(line, annotated, nextState))
-            currentState = nextState
+    // Lazy-initialized compiled patterns
+    private val compiledPatterns = mutableMapOf<Language, java.util.regex.Pattern>()
+    
+    private fun getPattern(language: Language): java.util.regex.Pattern {
+        return compiledPatterns.getOrPut(language) {
+            val patterns = patternsMap[language] ?: emptyList()
+            val combined = patterns.joinToString("|") { (name, pattern) -> "(?<$name>$pattern)" }
+            java.util.regex.Pattern.compile(combined)
         }
     }
 
-    private fun updateCache(newLines: List<String>, language: Language) {
-        val oldSize = lineCache.size
-        val newSize = newLines.size
-        
-        // Find first difference
-        var firstDiff = 0
-        while (firstDiff < oldSize && firstDiff < newSize && lineCache[firstDiff].text == newLines[firstDiff]) {
-            firstDiff++
-        }
-        
-        if (firstDiff == oldSize && oldSize == newSize) return
-
-        // Find last difference
-        var oldLast = oldSize - 1
-        var newLast = newSize - 1
-        while (oldLast >= firstDiff && newLast >= firstDiff && lineCache[oldLast].text == newLines[newLast]) {
-            oldLast--
-            newLast--
-        }
-
-        // Remove old range
-        if (oldLast >= firstDiff) {
-            repeat(oldLast - firstDiff + 1) {
-                lineCache.removeAt(firstDiff)
-            }
-        }
-
-        // Insert new range
-        var currentState = if (firstDiff > 0) lineCache[firstDiff - 1].endState else MultiLineState.NORMAL
-        val newHighlighted = mutableListOf<HighlightedLine>()
-        for (i in firstDiff..newLast) {
-            val (annotated, nextState) = highlightLine(newLines[i], language, currentState)
-            newHighlighted.add(HighlightedLine(newLines[i], annotated, nextState))
-            currentState = nextState
-        }
-        lineCache.addAll(firstDiff, newHighlighted)
-
-        // Propagate state if changed
-        var idx = firstDiff + newHighlighted.size
-        while (idx < lineCache.size) {
-            if (lineCache[idx - 1].endState == (if (idx > 0) lineCache[idx].annotatedString.let { MultiLineState.NORMAL } else MultiLineState.NORMAL)) {
-               // This is a simplification. Real state propagation check:
-            }
-            // For now, let's just re-highlight if state changed
-            val (annotated, nextState) = highlightLine(lineCache[idx].text, language, currentState)
-            if (annotated == lineCache[idx].annotatedString && nextState == lineCache[idx].endState) {
-                break // State stabilized
-            }
-            lineCache[idx] = lineCache[idx].copy(annotatedString = annotated, endState = nextState)
-            currentState = nextState
-            idx++
-        }
-    }
-
-    private fun joinCache(): androidx.compose.ui.text.AnnotatedString {
-        return buildAnnotatedString {
-            lineCache.forEachIndexed { index, line ->
-                append(line.annotatedString)
-                if (index < lineCache.size - 1) {
-                    append("\n")
-                }
-            }
-        }
-    }
-
-    private fun highlightLine(line: String, language: Language, startState: MultiLineState): Pair<androidx.compose.ui.text.AnnotatedString, MultiLineState> {
-        val pattern = compiledPatterns[language] ?: return androidx.compose.ui.text.AnnotatedString(line) to MultiLineState.NORMAL
+    /**
+     * Highlights a single line. Used by SyntaxHighlighterState for incremental updates.
+     */
+    fun highlightLine(line: String, language: Language, startState: MultiLineState): Pair<androidx.compose.ui.text.AnnotatedString, MultiLineState> {
+        val pattern = getPattern(language)
         val matcher = pattern.matcher(line)
         
-        var currentState = startState
         val annotated = buildAnnotatedString {
             var lastEnd = 0
             
-            // Simple multi-line handling for common cases
-            // In a real production editor, this would be a full state machine
             while (matcher.find()) {
+                // Add unhighlighted text before match
                 if (matcher.start() > lastEnd) {
                     withStyle(SpanStyle(color = colorDefault)) {
                         append(line.substring(lastEnd, matcher.start()))
                     }
                 }
                 
+                // Find which group matched and apply appropriate color
                 var matched = false
-                for (name in colorMap.keys) {
+                for ((name, color) in colorMap) {
                     try {
                         val groupText = matcher.group(name)
                         if (groupText != null) {
-                            withStyle(SpanStyle(color = colorMap[name] ?: colorDefault)) {
+                            withStyle(SpanStyle(color = color)) {
                                 append(groupText)
                             }
                             matched = true
@@ -2456,6 +2510,8 @@ object SyntaxHighlighter {
                 }
                 lastEnd = matcher.end()
             }
+            
+            // Add remaining text
             if (lastEnd < line.length) {
                 withStyle(SpanStyle(color = colorDefault)) {
                     append(line.substring(lastEnd))
@@ -2463,8 +2519,25 @@ object SyntaxHighlighter {
             }
         }
         
-        // Determin next state (stub for now, as our regexes are line-bound currently)
+        // For now, we use a simplified state tracking
+        // A full implementation would track multi-line strings and block comments
         return annotated to MultiLineState.NORMAL
+    }
+    
+    /**
+     * Full highlight function for backward compatibility
+     */
+    fun highlight(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
+        val lines = code.split('\n')
+        return buildAnnotatedString {
+            lines.forEachIndexed { index, line ->
+                val (annotated, _) = highlightLine(line, language, MultiLineState.NORMAL)
+                append(annotated)
+                if (index < lines.size - 1) {
+                    append("\n")
+                }
+            }
+        }
     }
 }
 
