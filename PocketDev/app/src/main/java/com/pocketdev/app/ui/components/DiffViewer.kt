@@ -1,15 +1,23 @@
 package com.pocketdev.app.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -17,11 +25,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.github.difflib.DiffUtils
-import com.github.difflib.patch.AbstractDelta
-import com.github.difflib.patch.Chunk
 import com.github.difflib.patch.DeltaType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
+@Immutable
 data class DiffLine(val text: String, val type: DiffLineType)
+
 enum class DiffLineType { UNCHANGED, ADDED, DELETED }
 
 @Composable
@@ -31,8 +41,12 @@ fun DiffViewer(
     fontSize: Int,
     modifier: Modifier = Modifier
 ) {
-    val diffLines = remember(originalCode, newCode) {
-        computeDiff(originalCode, newCode)
+    var diffLines by remember(originalCode, newCode) { mutableStateOf<List<DiffLine>>(emptyList()) }
+
+    LaunchedEffect(originalCode, newCode) {
+        diffLines = withContext(Dispatchers.Default) {
+            computeDiff(originalCode, newCode)
+        }
     }
 
     val codeTextStyle = TextStyle(
@@ -40,17 +54,21 @@ fun DiffViewer(
         fontSize = fontSize.sp,
         lineHeight = (fontSize * 1.5).sp
     )
+    val horizontalScrollState = rememberScrollState()
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(8.dp)
-            .horizontalScroll(rememberScrollState())
+            .horizontalScroll(horizontalScrollState)
     ) {
-        items(diffLines) { line ->
+        itemsIndexed(
+            items = diffLines,
+            key = { index, line -> "$index:${line.type}:${line.text.hashCode()}" }
+        ) { _, line ->
             val backgroundColor = when (line.type) {
-                DiffLineType.ADDED -> Color(0x404CAF50) // Semi-transparent green
-                DiffLineType.DELETED -> Color(0x40F44336) // Semi-transparent red
+                DiffLineType.ADDED -> Color(0x404CAF50)
+                DiffLineType.DELETED -> Color(0x40F44336)
                 DiffLineType.UNCHANGED -> Color.Transparent
             }
             val textColor = when (line.type) {
@@ -85,12 +103,11 @@ private fun computeDiff(original: String, revised: String): List<DiffLine> {
     val originalLines = original.lines()
     val revisedLines = revised.lines()
     val patch = DiffUtils.diff(originalLines, revisedLines)
-    
+
     val result = mutableListOf<DiffLine>()
     var currentOriginalIndex = 0
 
     for (delta in patch.getDeltas()) {
-        // Add unchanged lines before this delta
         while (currentOriginalIndex < delta.source.position) {
             result.add(DiffLine(originalLines[currentOriginalIndex], DiffLineType.UNCHANGED))
             currentOriginalIndex++
@@ -121,7 +138,6 @@ private fun computeDiff(original: String, revised: String): List<DiffLine> {
         }
     }
 
-    // Add remaining unchanged lines
     while (currentOriginalIndex < originalLines.size) {
         result.add(DiffLine(originalLines[currentOriginalIndex], DiffLineType.UNCHANGED))
         currentOriginalIndex++

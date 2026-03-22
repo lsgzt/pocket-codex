@@ -31,7 +31,7 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
         else CodeExamples.getExamplesForLanguage(selectedLanguage!!)
     }
 
-    val filterLanguages = listOf(Language.PYTHON, Language.JAVASCRIPT, Language.HTML)
+    val filterLanguages = remember { listOf(Language.PYTHON, Language.JAVASCRIPT, Language.HTML) }
 
     Scaffold(
         topBar = {
@@ -42,6 +42,7 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .consumeWindowInsets(paddingValues)
         ) {
             // Language filter chips
             LazyRow(
@@ -58,7 +59,7 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
                         } else null
                     )
                 }
-                items(filterLanguages) { lang ->
+                items(filterLanguages, key = { it.name }) { lang ->
                     FilterChip(
                         selected = selectedLanguage == lang,
                         onClick = {
@@ -79,7 +80,7 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(filteredExamples) { example ->
+                items(filteredExamples, key = { "${it.language.name}:${it.title}" }) { example ->
                     ExampleCard(
                         example = example,
                         onPreview = { previewExample = example },
@@ -110,6 +111,10 @@ fun ExampleCard(
     onPreview: () -> Unit,
     onLoad: () -> Unit
 ) {
+    val previewSnippet = remember(example.code) {
+        example.code.lines().take(4).joinToString("\n")
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -164,7 +169,7 @@ fun ExampleCard(
                     .clickable { onPreview() }
             ) {
                 Text(
-                    text = example.code.lines().take(4).joinToString("\n"),
+                    text = previewSnippet,
                     style = androidx.compose.ui.text.TextStyle(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,

@@ -1,7 +1,9 @@
 package com.pocketdev.app.utils
 
+import androidx.compose.runtime.Immutable
 import com.pocketdev.app.data.models.Language
 
+@Immutable
 data class CodeExample(
     val title: String,
     val description: String,

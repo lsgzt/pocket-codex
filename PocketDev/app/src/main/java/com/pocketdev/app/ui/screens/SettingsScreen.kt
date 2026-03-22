@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -21,20 +22,21 @@ import com.pocketdev.app.viewmodels.SettingsViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel) {
-    val theme by viewModel.theme.collectAsState()
-    val fontSize by viewModel.fontSize.collectAsState()
-    val tabSize by viewModel.tabSize.collectAsState()
-    val autoSave by viewModel.autoSave.collectAsState()
-    val autocomplete by viewModel.autocomplete.collectAsState()
-    val ghostSuggestions by viewModel.ghostSuggestions.collectAsState()
-    val lineNumbers by viewModel.lineNumbers.collectAsState()
-    val wordWrap by viewModel.wordWrap.collectAsState()
-    val apiKeyState by viewModel.apiKeyState.collectAsState()
-    val aiModel by viewModel.aiModel.collectAsState()
+    val theme by viewModel.theme.collectAsStateWithLifecycle()
+    val fontSize by viewModel.fontSize.collectAsStateWithLifecycle()
+    val tabSize by viewModel.tabSize.collectAsStateWithLifecycle()
+    val autoSave by viewModel.autoSave.collectAsStateWithLifecycle()
+    val autocomplete by viewModel.autocomplete.collectAsStateWithLifecycle()
+    val ghostSuggestions by viewModel.ghostSuggestions.collectAsStateWithLifecycle()
+    val lineNumbers by viewModel.lineNumbers.collectAsStateWithLifecycle()
+    val wordWrap by viewModel.wordWrap.collectAsStateWithLifecycle()
+    val apiKeyState by viewModel.apiKeyState.collectAsStateWithLifecycle()
+    val aiModel by viewModel.aiModel.collectAsStateWithLifecycle()
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var showApiKeyInfo by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     Scaffold(
         topBar = {
@@ -45,7 +47,8 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
+                .consumeWindowInsets(paddingValues)
+                .verticalScroll(scrollState)
         ) {
             // AI Section
             SettingsSectionHeader("🤖 AI Integration (Groq)")
@@ -223,6 +226,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             ) {
                 var expanded by remember { mutableStateOf(false) }
+                val themeOptions = remember { listOf("dark" to "🌙 Dark", "light" to "☀️ Light", "auto" to "🔄 System") }
                 Box {
                     OutlinedButton(onClick = { expanded = true }) {
                         Text(
@@ -235,8 +239,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         Icon(Icons.Default.ArrowDropDown, null)
                     }
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                        listOf("dark" to "🌙 Dark", "light" to "☀️ Light", "auto" to "🔄 System")
-                            .forEach { (value, label) ->
+                        themeOptions.forEach { (value, label) ->
                                 DropdownMenuItem(
                                     text = { Text(label) },
                                     onClick = { viewModel.setTheme(value); expanded = false },
@@ -270,8 +273,9 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 title = "Tab Size",
                 subtitle = "$tabSize spaces"
             ) {
+                val tabSizes = remember { listOf(2, 4, 8) }
                 Row {
-                    listOf(2, 4, 8).forEach { size ->
+                    tabSizes.forEach { size ->
                         FilterChip(
                             selected = tabSize == size,
                             onClick = { viewModel.setTabSize(size) },

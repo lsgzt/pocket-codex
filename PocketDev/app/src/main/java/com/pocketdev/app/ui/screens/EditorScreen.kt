@@ -3,7 +3,6 @@ package com.pocketdev.app.ui.screens
 import android.webkit.WebView
 import android.webkit.WebChromeClient
 import android.webkit.WebViewClient
-import android.webkit.JavascriptInterface
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -13,7 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,9 +34,14 @@ import com.pocketdev.app.editor.AutocompleteItem
 import com.pocketdev.app.viewmodels.EditorViewModel
 import com.pocketdev.app.viewmodels.SettingsViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.pocketdev.app.ui.components.MarkdownText
 import com.pocketdev.app.ui.components.DiffViewer
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.ui.platform.LocalDensity
@@ -46,7 +50,6 @@ import androidx.compose.material.icons.filled.Send
 
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.window.Dialog
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,7 +58,6 @@ import androidx.compose.ui.platform.LocalContext
 import java.io.BufferedReader
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.Key
@@ -71,19 +73,19 @@ fun EditorScreen(
     settingsViewModel: SettingsViewModel,
     onNavigateToProjects: () -> Unit
 ) {
-    val code by viewModel.currentCode.collectAsState()
-    val language by viewModel.currentLanguage.collectAsState()
-    val files by viewModel.currentFiles.collectAsState()
-    val activeFileIndex by viewModel.activeFileIndex.collectAsState()
-    val projectName by viewModel.currentProjectName.collectAsState()
-    val executionState by viewModel.executionState.collectAsState()
-    val aiState by viewModel.aiState.collectAsState()
-    val saveState by viewModel.saveState.collectAsState()
-    val htmlContent by viewModel.htmlContent.collectAsState()
-    val fontSize by settingsViewModel.fontSize.collectAsState()
-    val lineNumbers by settingsViewModel.lineNumbers.collectAsState()
-    val autocompleteEnabled by settingsViewModel.autocomplete.collectAsState()
-    val wordWrap by settingsViewModel.wordWrap.collectAsState()
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val files by viewModel.currentFiles.collectAsStateWithLifecycle()
+    val activeFileIndex by viewModel.activeFileIndex.collectAsStateWithLifecycle()
+    val projectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
+    val executionState by viewModel.executionState.collectAsStateWithLifecycle()
+    val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+    val saveState by viewModel.saveState.collectAsStateWithLifecycle()
+    val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
+    val fontSize by settingsViewModel.fontSize.collectAsStateWithLifecycle()
+    val lineNumbers by settingsViewModel.lineNumbers.collectAsStateWithLifecycle()
+    val autocompleteEnabled by settingsViewModel.autocomplete.collectAsStateWithLifecycle()
+    val wordWrap by settingsViewModel.wordWrap.collectAsStateWithLifecycle()
+    val allLanguages = remember { Language.values().toList() }
 
     var showLanguageMenu by remember { mutableStateOf(false) }
     var showAiMenu by remember { mutableStateOf(false) }
@@ -96,10 +98,8 @@ fun EditorScreen(
     var showFindReplace by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var isTerminalFullScreen by remember { mutableStateOf(false) }
-    val stdInput by viewModel.stdInput.collectAsState()
     var findText by remember { mutableStateOf("") }
     var replaceText by remember { mutableStateOf("") }
-    var selection by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0)) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -175,7 +175,7 @@ fun EditorScreen(
                 try {
                     context.contentResolver.openOutputStream(it)?.use { outputStream ->
                         val writer = OutputStreamWriter(outputStream)
-                        writer.write(code)
+                        writer.write(viewModel.currentCode.value)
                         writer.flush()
                     }
                 } catch (e: Exception) {
@@ -215,7 +215,7 @@ fun EditorScreen(
                             expanded = showLanguageMenu,
                             onDismissRequest = { showLanguageMenu = false }
                         ) {
-                            Language.values().forEach { lang ->
+                            allLanguages.forEach { lang ->
                                 DropdownMenuItem(
                                     text = {
                                         Text("${lang.icon} ${lang.displayName}")
@@ -397,10 +397,14 @@ fun EditorScreen(
             }
         }
     ) { paddingValues ->
+        val code by viewModel.currentCode.collectAsStateWithLifecycle()
+        var selection by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0)) }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .consumeWindowInsets(paddingValues)
         ) {
             // File Tabs
             if (files.isNotEmpty()) {
@@ -411,11 +415,13 @@ fun EditorScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     files.forEachIndexed { index, file ->
-                        androidx.compose.material3.Tab(
-                            selected = activeFileIndex == index,
-                            onClick = { viewModel.switchFile(index) },
-                            text = { Text(file.name) }
-                        )
+                        key(file.id) {
+                            androidx.compose.material3.Tab(
+                                selected = activeFileIndex == index,
+                                onClick = { viewModel.switchFile(index) },
+                                text = { Text(file.name) }
+                            )
+                        }
                     }
                     androidx.compose.material3.Tab(
                         selected = false,
@@ -480,8 +486,8 @@ fun EditorScreen(
                         }
                     } else {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            val ghostSuggestion by viewModel.ghostSuggestion.collectAsState()
-                            val inlineDiffSuggestion by viewModel.inlineDiffSuggestion.collectAsState()
+                            val ghostSuggestion by viewModel.ghostSuggestion.collectAsStateWithLifecycle()
+                            val inlineDiffSuggestion by viewModel.inlineDiffSuggestion.collectAsStateWithLifecycle()
                             CodeEditor(
                                 code = code,
                                 language = language,
@@ -564,7 +570,7 @@ fun EditorScreen(
                 SpecialCharactersBar(
                     onCharacterClick = { char ->
                         val currentCode = viewModel.currentCode.value
-                        val cursorPos = selection.start
+                        val cursorPos = selection.start.coerceIn(0, currentCode.length)
                         
                         // Auto-close brackets and quotes
                         val (insertText, cursorOffset) = when (char) {
@@ -600,7 +606,7 @@ fun EditorScreen(
                 },
                 onDismiss = viewModel::dismissAiResult,
                 onAskFollowUp = viewModel::askFollowUpQuestion,
-                currentCode = code
+                currentCode = viewModel.currentCode.value
             )
         }
     } else if (aiState is UiState.Error) {
@@ -719,7 +725,7 @@ fun EditorScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Select language:", style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(8.dp))
-                    Language.values().forEach { lang ->
+                    allLanguages.forEach { lang ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -807,60 +813,73 @@ fun CodeEditor(
         }
     }
 
-    var highlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
+    var baseHighlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
 
-    LaunchedEffect(textFieldValue.text, language, ghostSuggestion, inlineDiffSuggestion, textFieldValue.selection) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            val newHighlight = SyntaxHighlighter.highlight(textFieldValue.text, language)
-            
-            if (ghostSuggestion != null) {
-                // Simple APPEND type - show in gray
+    LaunchedEffect(textFieldValue.text, language) {
+        baseHighlightedCode = withContext(Dispatchers.Default) {
+            SyntaxHighlighter.highlight(textFieldValue.text, language)
+        }
+    }
+
+    val highlightedCode = remember(
+        baseHighlightedCode,
+        ghostSuggestion,
+        inlineDiffSuggestion,
+        textFieldValue.selection,
+        textFieldValue.text
+    ) {
+        when {
+            ghostSuggestion != null -> {
                 val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
                 val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-                builder.append(newHighlight.subSequence(0, cursor))
-                
-                builder.withStyle(SpanStyle(
-                    color = Color(0xFF888888),
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )) {
+                builder.append(baseHighlightedCode.subSequence(0, cursor))
+                builder.withStyle(
+                    SpanStyle(
+                        color = Color(0xFF888888),
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    )
+                ) {
                     append(ghostSuggestion)
                 }
-                builder.append(newHighlight.subSequence(cursor, newHighlight.length))
-                highlightedCode = builder.toAnnotatedString()
-            } else if (inlineDiffSuggestion != null && inlineDiffSuggestion.deleteText != null && inlineDiffSuggestion.addText != null) {
-                // REPLACE type - show inline diff with red (deletion) and green (addition)
+                builder.append(baseHighlightedCode.subSequence(cursor, baseHighlightedCode.length))
+                builder.toAnnotatedString()
+            }
+
+            inlineDiffSuggestion != null &&
+                inlineDiffSuggestion.deleteText != null &&
+                inlineDiffSuggestion.addText != null -> {
                 val builder = androidx.compose.ui.text.AnnotatedString.Builder()
                 val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
                 val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
-                
-                // Text before the deletion
-                builder.append(newHighlight.subSequence(0, deleteStart))
-                
-                // Deleted text in red with strikethrough
+
+                builder.append(baseHighlightedCode.subSequence(0, deleteStart))
+
                 if (deleteEnd > deleteStart) {
-                    builder.withStyle(SpanStyle(
-                        color = Color(0xFFE53935), // Red
-                        background = Color(0x33FFCDD2), // Light red background
-                        textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
-                    )) {
+                    builder.withStyle(
+                        SpanStyle(
+                            color = Color(0xFFE53935),
+                            background = Color(0x33FFCDD2),
+                            textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
+                        )
+                    ) {
                         append(textFieldValue.text.substring(deleteStart, deleteEnd))
                     }
                 }
-                
-                // Added text in green
-                builder.withStyle(SpanStyle(
-                    color = Color(0xFF2E7D32), // Green
-                    background = Color(0x33C8E6C9) // Light green background
-                )) {
+
+                builder.withStyle(
+                    SpanStyle(
+                        color = Color(0xFF2E7D32),
+                        background = Color(0x33C8E6C9)
+                    )
+                ) {
                     append(inlineDiffSuggestion.addText)
                 }
-                
-                // Text after the deletion
-                builder.append(newHighlight.subSequence(deleteEnd, newHighlight.length))
-                highlightedCode = builder.toAnnotatedString()
-            } else {
-                highlightedCode = newHighlight
+
+                builder.append(baseHighlightedCode.subSequence(deleteEnd, baseHighlightedCode.length))
+                builder.toAnnotatedString()
             }
+
+            else -> baseHighlightedCode
         }
     }
 
@@ -879,17 +898,28 @@ fun CodeEditor(
     var showAutocomplete by remember { mutableStateOf(false) }
     var suggestions by remember { mutableStateOf<List<AutocompleteItem>>(emptyList()) }
     var cursorRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
-    var lineNumberWidth by remember { mutableStateOf(0.dp) }
-    
-    // Track visual line count for word wrap mode
-    var visualLineCount by remember { mutableStateOf(1) }
-    var lineIndexToNumber by remember { mutableStateOf(mapOf<Int, Int>()) }
+
+    // Track visual line mapping for word wrap mode
+    var visualLineInfo by remember { mutableStateOf(1 to emptyMap<Int, Int>()) }
+
+    val logicalLineCount = remember(textFieldValue.text) {
+        textFieldValue.text.count { it == '\n' } + 1
+    }
+    val lineNumberWidth = remember(lineNumbers, logicalLineCount, fontSize) {
+        if (lineNumbers) {
+            (maxOf(logicalLineCount, 1).toString().length * fontSize * 0.6 + 12).dp
+        } else {
+            0.dp
+        }
+    }
 
     // Update suggestions when code changes
     LaunchedEffect(textFieldValue.text, textFieldValue.selection, language, autocompleteEnabled) {
         val cursorPosition = textFieldValue.selection.start
         if (autocompleteEnabled && cursorPosition <= textFieldValue.text.length) {
-            val newSuggestions = AutocompleteEngine.getSuggestions(textFieldValue.text, cursorPosition, language)
+            val newSuggestions = withContext(Dispatchers.Default) {
+                AutocompleteEngine.getSuggestions(textFieldValue.text, cursorPosition, language)
+            }
             suggestions = newSuggestions
             showAutocomplete = newSuggestions.isNotEmpty()
         } else {
@@ -897,9 +927,6 @@ fun CodeEditor(
             showAutocomplete = false
         }
     }
-
-    // Track visual line count for word wrap mode
-    var visualLineInfo by remember { mutableStateOf(Pair(1, emptyMap<Int, Int>())) }
 
     Box(modifier = modifier) {
         Row(
@@ -909,22 +936,22 @@ fun CodeEditor(
         ) {
             // Line numbers — same font size and line height as code, shared scroll
             if (lineNumbers) {
-                val logicalLines = textFieldValue.text.split("\n").size
-                lineNumberWidth = (maxOf(logicalLines, 1).toString().length * fontSize * 0.6 + 12).dp
-                
-                // For word wrap, show line numbers based on visual lines
-                // Each visual line shows the logical line number it belongs to
-                val (visualCount, lineMapping) = if (wordWrap) visualLineInfo else Pair(logicalLines, emptyMap<Int, Int>())
-                
-                val lineNumbersText = if (wordWrap && lineMapping.isNotEmpty()) {
-                    // Show logical line numbers for each visual line
-                    (0 until visualCount).map { visualLine ->
-                        lineMapping[visualLine] ?: (visualLine + 1)
-                    }.joinToString("\n")
+                val (visualCount, lineMapping) = if (wordWrap) {
+                    visualLineInfo
                 } else {
-                    (1..maxOf(logicalLines, 1)).joinToString("\n")
+                    logicalLineCount to emptyMap<Int, Int>()
                 }
-                
+
+                val lineNumbersText = remember(wordWrap, lineMapping, visualCount, logicalLineCount) {
+                    if (wordWrap && lineMapping.isNotEmpty()) {
+                        (0 until visualCount).map { visualLine ->
+                            lineMapping[visualLine] ?: (visualLine + 1)
+                        }.joinToString("\n")
+                    } else {
+                        (1..maxOf(logicalLineCount, 1)).joinToString("\n")
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .width(lineNumberWidth)
@@ -1184,9 +1211,6 @@ fun CodeEditor(
         }
     }
 }
-}
-
-
 
 private fun getWordPrefixForCompletion(code: String, cursorPos: Int): String {
     if (cursorPos <= 0 || cursorPos > code.length) return ""
@@ -1209,12 +1233,13 @@ fun TerminalPanel(
     modifier: Modifier = Modifier
 ) {
     val maxHeight = if (isFullScreen) Dp.Unspecified else 250.dp
-    val messages by terminalManager.messages.collectAsState()
-    val scrollState = rememberScrollState()
+    val messages by terminalManager.messages.collectAsStateWithLifecycle()
+    val isWaitingForInput by terminalManager.isWaitingForInput.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            scrollState.animateScrollTo(scrollState.maxValue)
+            listState.animateScrollToItem(messages.lastIndex)
         }
     }
 
@@ -1226,7 +1251,6 @@ fun TerminalPanel(
         tonalElevation = 4.dp
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1252,7 +1276,11 @@ fun TerminalPanel(
                     }
                 }
                 IconButton(onClick = onToggleFullScreen, modifier = Modifier.size(28.dp)) {
-                    Icon(if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Toggle Fullscreen", modifier = Modifier.size(16.dp))
+                    Icon(
+                        if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                        "Toggle Fullscreen",
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
                 IconButton(onClick = onClear, modifier = Modifier.size(28.dp)) {
                     Icon(Icons.Default.Delete, "Clear terminal", modifier = Modifier.size(16.dp))
@@ -1263,32 +1291,14 @@ fun TerminalPanel(
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .verticalScroll(scrollState)
-                    .padding(12.dp)
-            ) {
-                messages.forEach { msg ->
-                    val color = when (msg.type) {
-                        com.pocketdev.app.execution.TerminalMessageType.NORMAL -> MaterialTheme.colorScheme.onSurface
-                        com.pocketdev.app.execution.TerminalMessageType.ERROR -> Color(0xFFEF9A9A)
-                        com.pocketdev.app.execution.TerminalMessageType.AGENT -> Color(0xFF81C784)
-                        com.pocketdev.app.execution.TerminalMessageType.STATUS -> Color(0xFF64B5F6)
-                        com.pocketdev.app.execution.TerminalMessageType.INPUT_PROMPT -> Color(0xFFFFD54F)
-                    }
-                    Text(
-                        text = msg.text,
-                        style = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp,
-                            color = color
-                        ),
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-                if (messages.isEmpty()) {
+            if (messages.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(12.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
                     Text(
                         text = "(no output)",
                         style = TextStyle(
@@ -1298,9 +1308,38 @@ fun TerminalPanel(
                         )
                     )
                 }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    state = listState,
+                    contentPadding = PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    itemsIndexed(
+                        items = messages,
+                        key = { index, msg -> "$index:${msg.type}:${msg.text.hashCode()}" }
+                    ) { _, msg ->
+                        val color = when (msg.type) {
+                            com.pocketdev.app.execution.TerminalMessageType.NORMAL -> MaterialTheme.colorScheme.onSurface
+                            com.pocketdev.app.execution.TerminalMessageType.ERROR -> Color(0xFFEF9A9A)
+                            com.pocketdev.app.execution.TerminalMessageType.AGENT -> Color(0xFF81C784)
+                            com.pocketdev.app.execution.TerminalMessageType.STATUS -> Color(0xFF64B5F6)
+                            com.pocketdev.app.execution.TerminalMessageType.INPUT_PROMPT -> Color(0xFFFFD54F)
+                        }
+                        Text(
+                            text = msg.text,
+                            style = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                color = color
+                            )
+                        )
+                    }
+                }
             }
 
-            // Real-time input prompt at bottom (like reference image)
             if (onSendInput != null) {
                 var inputText by remember { mutableStateOf("") }
                 Surface(
@@ -1345,9 +1384,8 @@ fun TerminalPanel(
                             ),
                             decorationBox = { innerTextField ->
                                 if (inputText.isEmpty()) {
-                                    val isWaiting = terminalManager.isWaitingForInput.collectAsState().value
                                     Text(
-                                        if (isWaiting) "Enter input for script..." else "Type input here...",
+                                        if (isWaitingForInput) "Enter input for script..." else "Type input here...",
                                         style = TextStyle(
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 13.sp,
@@ -1563,6 +1601,7 @@ fun NewFileDialog(
     onDismiss: () -> Unit
 ) {
     var selectedLanguage by remember { mutableStateOf(Language.PYTHON) }
+    val allLanguages = remember { Language.values().toList() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1571,7 +1610,7 @@ fun NewFileDialog(
             Column {
                 Text("Select language:", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
-                Language.values().forEach { lang ->
+                allLanguages.forEach { lang ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1682,14 +1721,14 @@ object SyntaxHighlighter {
     private fun tokenize(code: String, language: Language): List<Token> {
         val tokens = mutableListOf<Token>()
         val patterns = when (language) {
-            Language.PYTHON -> pythonPatterns()
-            Language.JAVASCRIPT -> jsPatterns()
-            Language.HTML -> htmlPatterns()
-            Language.CSS -> cssPatterns()
-            Language.JAVA -> javaPatterns()
-            Language.CPP -> cppPatterns()
-            Language.KOTLIN -> kotlinPatterns()
-            Language.JSON -> jsonPatterns()
+            Language.PYTHON -> pythonPatterns
+            Language.JAVASCRIPT -> jsPatterns
+            Language.HTML -> htmlPatterns
+            Language.CSS -> cssPatterns
+            Language.JAVA -> javaPatterns
+            Language.CPP -> cppPatterns
+            Language.KOTLIN -> kotlinPatterns
+            Language.JSON -> jsonPatterns
         }
 
         val matchers = patterns.map { it.first.toPattern().matcher(code) to it.second }
@@ -1739,7 +1778,7 @@ object SyntaxHighlighter {
     private val colorDefault = Color(0xFFCDD9E5)
     private val colorPreprocessor = Color(0xFFC586C0)
 
-    private fun pythonPatterns() = listOf(
+    private val pythonPatterns = listOf(
         Regex("(#.*)") to colorComment,
         Regex("(\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?''')") to colorString,
         Regex("(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')") to colorString,
@@ -1751,7 +1790,7 @@ object SyntaxHighlighter {
         Regex("[+\\-*/=<>!&|^~%@]") to colorOperator,
     )
 
-    private fun jsPatterns() = listOf(
+    private val jsPatterns = listOf(
         Regex("(//.*)") to colorComment,
         Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
         Regex("(`(?:[^`\\\\]|\\\\.)*`)") to colorString,
@@ -1764,7 +1803,7 @@ object SyntaxHighlighter {
         Regex("[+\\-*/=<>!&|^~%]") to colorOperator,
     )
 
-    private fun htmlPatterns() = listOf(
+    private val htmlPatterns = listOf(
         Regex("(<!--[\\s\\S]*?-->)") to colorComment,
         Regex("(</?[a-zA-Z][a-zA-Z0-9]*)") to colorTag,
         Regex("(/?>)") to colorTag,
@@ -1773,7 +1812,7 @@ object SyntaxHighlighter {
         Regex("(&[a-zA-Z]+;|&#\\d+;)") to colorPreprocessor,
     )
 
-    private fun cssPatterns() = listOf(
+    private val cssPatterns = listOf(
         Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
         Regex("(//.*$)", RegexOption.MULTILINE) to colorComment,
         Regex("([.#][a-zA-Z][a-zA-Z0-9_-]*)") to colorFunction,
@@ -1785,7 +1824,7 @@ object SyntaxHighlighter {
         Regex("(@[a-zA-Z-]+)") to colorPreprocessor,
     )
 
-    private fun javaPatterns() = listOf(
+    private val javaPatterns = listOf(
         Regex("(//.*)") to colorComment,
         Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
         Regex("(\"(?:[^\"\\\\]|\\\\.)*\")") to colorString,
@@ -1798,7 +1837,7 @@ object SyntaxHighlighter {
         Regex("(@[A-Za-z]+)") to colorPreprocessor,
     )
 
-    private fun cppPatterns() = listOf(
+    private val cppPatterns = listOf(
         Regex("(//.*)") to colorComment,
         Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
         Regex("(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')") to colorString,
@@ -1810,7 +1849,7 @@ object SyntaxHighlighter {
         Regex("(::)") to colorOperator,
     )
 
-    private fun kotlinPatterns() = listOf(
+    private val kotlinPatterns = listOf(
         Regex("(//.*)") to colorComment,
         Regex("(/\\*[\\s\\S]*?\\*/)") to colorComment,
         Regex("(\"\"\"[\\s\\S]*?\"\"\")") to colorString,
@@ -1823,7 +1862,7 @@ object SyntaxHighlighter {
         Regex("(@[A-Za-z]+)") to colorPreprocessor,
     )
 
-    private fun jsonPatterns() = listOf(
+    private val jsonPatterns = listOf(
         Regex("(\"(?:[^\"\\\\]|\\\\.)*\")(?=\\s*:)") to colorAttr,
         Regex("(\"(?:[^\"\\\\]|\\\\.)*\")") to colorString,
         Regex("\\b(true|false|null)\\b") to colorKeyword,
@@ -1843,12 +1882,14 @@ fun SpecialCharactersBar(
 ) {
     val specialChars = remember {
         listOf(
-        "(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/",
-        ".", ":", ";", "\"", "'", "!", "?", "@", "#", "$", "%", "&", "_",
-        "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "=>", "::"
+            "(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/",
+            ".", ":", ";", "\"", "'", "!", "?", "@", "#", "$", "%", "&", "_",
+            "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "=>", "::"
         )
     }
-    
+    val scrollState = rememberScrollState()
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1857,31 +1898,36 @@ fun SpecialCharactersBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+                .horizontalScroll(scrollState)
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             specialChars.forEach { char ->
-                Box(
-                    modifier = Modifier
-                        .clickable { onCharacterClick(char) }
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant,
-                            RoundedCornerShape(4.dp)
+                key(char) {
+                    Box(
+                        modifier = Modifier
+                            .clickable {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                onCharacterClick(char)
+                            }
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = char,
+                            style = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
                         )
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = char,
-                        style = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    }
                 }
             }
         }

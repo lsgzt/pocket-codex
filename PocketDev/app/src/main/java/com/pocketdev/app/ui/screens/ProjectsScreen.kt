@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -22,8 +23,8 @@ fun ProjectsScreen(
     viewModel: EditorViewModel,
     onOpenProject: () -> Unit
 ) {
-    val projects by viewModel.filteredProjects.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
+    val projects by viewModel.filteredProjects.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     var showDeleteDialog by remember { mutableStateOf<Project?>(null) }
     var showNewProjectDialog by remember { mutableStateOf(false) }
 
@@ -43,6 +44,7 @@ fun ProjectsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .consumeWindowInsets(paddingValues)
         ) {
             // Search bar
             OutlinedTextField(
@@ -138,6 +140,7 @@ fun ProjectCard(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+    val formattedDate = remember(project.modifiedAt) { dateFormat.format(Date(project.modifiedAt)) }
 
     Card(
         onClick = onClick,
@@ -187,7 +190,7 @@ fun ProjectCard(
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = dateFormat.format(Date(project.modifiedAt)),
+                        text = formattedDate,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -268,6 +271,7 @@ fun NewProjectDialog(
     var name by remember { mutableStateOf("") }
     var selectedLanguage by remember { mutableStateOf(com.pocketdev.app.data.models.Language.PYTHON) }
     var showLanguageMenu by remember { mutableStateOf(false) }
+    val allLanguages = remember { com.pocketdev.app.data.models.Language.values().toList() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -297,7 +301,7 @@ fun NewProjectDialog(
                         expanded = showLanguageMenu,
                         onDismissRequest = { showLanguageMenu = false }
                     ) {
-                        com.pocketdev.app.data.models.Language.values().forEach { lang ->
+                        allLanguages.forEach { lang ->
                             DropdownMenuItem(
                                 text = { Text("${lang.icon} ${lang.displayName}") },
                                 onClick = {
