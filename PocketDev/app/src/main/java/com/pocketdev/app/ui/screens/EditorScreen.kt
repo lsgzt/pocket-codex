@@ -490,7 +490,8 @@ private fun EditorMainContent(
             viewModel = viewModel,
             settingsViewModel = settingsViewModel,
             uiState = uiState,
-            selectionState = selectionState
+            selectionState = selectionState,
+            modifier = Modifier.weight(1f)
         )
 
         EditorTerminalSection(
@@ -522,10 +523,11 @@ private fun EditorEditorSection(
     viewModel: EditorViewModel,
     settingsViewModel: SettingsViewModel,
     uiState: EditorUiState,
-    selectionState: EditorSelectionState
+    selectionState: EditorSelectionState,
+    modifier: Modifier = Modifier
 ) {
     if (!uiState.isTerminalFullScreen) {
-        Box(modifier = Modifier.weight(1f)) {
+        Box(modifier = modifier) {
             EditorWorkArea(
                 viewModel = viewModel,
                 settingsViewModel = settingsViewModel,
@@ -788,7 +790,7 @@ private fun EditorTerminalSection(
         visible = uiState.showTerminal,
         enter = slideInVertically(initialOffsetY = { it }),
         exit = slideOutVertically(targetOffsetY = { it }),
-        modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
+        modifier = Modifier.then(if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier)
     ) {
         val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
         val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
@@ -920,7 +922,7 @@ private fun EditorDialogsHost(
 
     if (uiState.showHtmlPreview && htmlContent != null) {
         HtmlPreviewDialog(
-            htmlContent = htmlContent,
+            htmlContent = htmlContent!!,
             onDismiss = { uiState.showHtmlPreview = false }
         )
     }
@@ -1198,8 +1200,9 @@ fun CodeEditor(
         )
     }
     val transparentCodeTextStyle = remember(codeTextStyle) { codeTextStyle.copy(color = Color.Transparent) }
-    val lineNumberTextStyle = remember(codeTextStyle) {
-        codeTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+    val lineNumberColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    val lineNumberTextStyle = remember(codeTextStyle, lineNumberColor) {
+        codeTextStyle.copy(color = lineNumberColor)
     }
 
     // Shared scroll state so line numbers scroll with code
