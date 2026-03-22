@@ -87,8 +87,6 @@ fun EditorScreen(
     val wordWrap by settingsViewModel.wordWrap.collectAsStateWithLifecycle()
     val allLanguages = remember { Language.values().toList() }
 
-    var showLanguageMenu by remember { mutableStateOf(false) }
-    var showAiMenu by remember { mutableStateOf(false) }
     var showAiWriteDialog by remember { mutableStateOf(false) }
     var showAiEditDialog by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -207,31 +205,10 @@ fun EditorScreen(
                 },
                 actions = {
                     // Language Selector
-                    Box {
-                        IconButton(onClick = { showLanguageMenu = true }) {
-                            Icon(Icons.Default.SwapHoriz, "Change Language")
-                        }
-                        DropdownMenu(
-                            expanded = showLanguageMenu,
-                            onDismissRequest = { showLanguageMenu = false }
-                        ) {
-                            allLanguages.forEach { lang ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text("${lang.icon} ${lang.displayName}")
-                                    },
-                                    onClick = {
-                                        viewModel.setLanguage(lang)
-                                        showLanguageMenu = false
-                                    },
-                                    leadingIcon = if (lang == language) {
-                                        { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) }
-                                    } else null
-                                )
-                            }
-                        }
-                    }
-
+                    LanguageSelectorMenu(
+                        currentLanguage = language,
+                        onLanguageSelected = { viewModel.setLanguage(it) }
+                    )
                     // Terminal Toggle
                     IconButton(onClick = { showTerminal = !showTerminal }) {
                         Icon(Icons.Default.Terminal, "Toggle Terminal", tint = if (showTerminal) MaterialTheme.colorScheme.primary else LocalContentColor.current)
@@ -242,52 +219,13 @@ fun EditorScreen(
                     }
 
                     // AI Features
-                    Box {
-                        IconButton(onClick = { showAiMenu = true }) {
-                            Icon(Icons.Default.AutoAwesome, "AI Features", tint = Color(0xFFFFB74D))
-                        }
-                        DropdownMenu(
-                            expanded = showAiMenu,
-                            onDismissRequest = { showAiMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("✨ Write Code with AI") },
-                                onClick = {
-                                    showAiWriteDialog = true
-                                    showAiMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("📝 Edit Code with AI") },
-                                onClick = {
-                                    showAiEditDialog = true
-                                    showAiMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("🔧 Fix Bug") },
-                                onClick = {
-                                    viewModel.fixBug()
-                                    showAiMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("💡 Explain Code") },
-                                onClick = {
-                                    viewModel.explainCode()
-                                    showAiMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("⚡ Improve Code") },
-                                onClick = {
-                                    viewModel.improveCode()
-                                    showAiMenu = false
-                                }
-                            )
-                        }
-                    }
-
+                    AiFeaturesMenu(
+                        onWriteCode = { showAiWriteDialog = true },
+                        onEditCode = { showAiEditDialog = true },
+                        onFixBug = { viewModel.fixBug() },
+                        onExplainCode = { viewModel.explainCode() },
+                        onImproveCode = { viewModel.improveCode() }
+                    )
                     // More options
                     var showMoreMenu by remember { mutableStateOf(false) }
                     Box {
@@ -771,6 +709,61 @@ fun EditorScreen(
     }
 }
 
+@Composable
+fun LanguageSelectorMenu(
+    currentLanguage: Language,
+    onLanguageSelected: (Language) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.SwapHoriz, "Change Language")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            Language.values().forEach { lang ->
+                DropdownMenuItem(
+                    text = { Text("${lang.icon} ${lang.displayName}") },
+                    onClick = {
+                        onLanguageSelected(lang)
+                        expanded = false
+                    },
+                    leadingIcon = if (lang == currentLanguage) {
+                        { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) }
+                    } else null
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AiFeaturesMenu(
+    onWriteCode: () -> Unit,
+    onEditCode: () -> Unit,
+    onFixBug: () -> Unit,
+    onExplainCode: () -> Unit,
+    onImproveCode: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.AutoAwesome, "AI Features", tint = Color(0xFFFFB74D))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            DropdownMenuItem(text = { Text("✨ Write Code with AI") }, onClick = { onWriteCode(); expanded = false })
+            DropdownMenuItem(text = { Text("📝 Edit Code with AI") }, onClick = { onEditCode(); expanded = false })
+            DropdownMenuItem(text = { Text("🔧 Fix Bug") }, onClick = { onFixBug(); expanded = false })
+            DropdownMenuItem(text = { Text("💡 Explain Code") }, onClick = { onExplainCode(); expanded = false })
+            DropdownMenuItem(text = { Text("⚡ Improve Code") }, onClick = { onImproveCode(); expanded = false })
+        }
+    }
+}
 @Composable
 fun CodeEditor(
     code: String,

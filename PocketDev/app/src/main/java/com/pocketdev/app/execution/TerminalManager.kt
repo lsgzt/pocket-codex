@@ -25,14 +25,16 @@ class TerminalManager {
     val inputQueue = LinkedBlockingQueue<String>()
 
     fun appendOutput(text: String) {
-        if (text.isNotEmpty()) {
-            _messages.value += TerminalMessage(text, TerminalMessageType.NORMAL)
+        val trimmed = text.trimEnd()
+        if (trimmed.isNotEmpty()) {
+            _messages.value += TerminalMessage(trimmed, TerminalMessageType.NORMAL)
         }
     }
 
     fun appendError(text: String) {
-        if (text.isNotEmpty()) {
-            _messages.value += TerminalMessage(text, TerminalMessageType.ERROR)
+        val trimmed = text.trimEnd()
+        if (trimmed.isNotEmpty()) {
+            _messages.value += TerminalMessage(trimmed, TerminalMessageType.ERROR)
         }
     }
 
