@@ -2347,14 +2347,14 @@ class SyntaxHighlighterState {
 }
 
 // Data class for cached highlighted lines
-private data class HighlightedLine(
+internal data class HighlightedLine(
     val text: String,
     val annotatedString: androidx.compose.ui.text.AnnotatedString,
     val endState: MultiLineState
 )
 
-// Multi-line state tracking
-private enum class MultiLineState {
+// Multi-line state tracking (internal for use by SyntaxHighlighter)
+internal enum class MultiLineState {
     NORMAL,
     IN_BLOCK_COMMENT,
     IN_STRING
@@ -2474,8 +2474,9 @@ object SyntaxHighlighter {
 
     /**
      * Highlights a single line. Used by SyntaxHighlighterState for incremental updates.
+     * Internal visibility to avoid exposing MultiLineState.
      */
-    fun highlightLine(line: String, language: Language, startState: MultiLineState): Pair<androidx.compose.ui.text.AnnotatedString, MultiLineState> {
+    internal fun highlightLine(line: String, language: Language, startState: MultiLineState): Pair<androidx.compose.ui.text.AnnotatedString, MultiLineState> {
         val pattern = getPattern(language)
         val matcher = pattern.matcher(line)
         
