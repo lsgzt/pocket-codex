@@ -36,7 +36,7 @@
         <activity
             android:name=".activities.MainActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize"
+            android:windowSoftInputMode="adjustNothing"
             android:screenOrientation="portrait" />
 
         <provider
