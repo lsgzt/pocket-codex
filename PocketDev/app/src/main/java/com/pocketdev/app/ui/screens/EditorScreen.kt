@@ -66,6 +66,40 @@ import androidx.compose.ui.input.key.KeyEventType
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 
+private enum class EditorDialogType {
+    AI_WRITE,
+    AI_EDIT,
+    SAVE_PROJECT,
+    NEW_FILE,
+    ADD_FILE
+}
+
+@Stable
+private class EditorUiState {
+    var activeDialog by mutableStateOf<EditorDialogType?>(null)
+    var showHtmlPreview by mutableStateOf(false)
+    var showFindReplace by mutableStateOf(false)
+    var showTerminal by mutableStateOf(false)
+    var isTerminalFullScreen by mutableStateOf(false)
+    var findText by mutableStateOf("")
+    var replaceText by mutableStateOf("")
+}
+@Stable
+private class EditorSelectionState {
+    var value by mutableStateOf(androidx.compose.ui.text.TextRange(0))
+}
+
+@Composable
+private fun rememberEditorSelectionState(): EditorSelectionState {
+    return remember { EditorSelectionState() }
+}
+
+
+@Composable
+private fun rememberEditorUiState(): EditorUiState {
+    return remember { EditorUiState() }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
@@ -73,95 +107,39 @@ fun EditorScreen(
     settingsViewModel: SettingsViewModel,
     onNavigateToProjects: () -> Unit
 ) {
-    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
-    val files by viewModel.currentFiles.collectAsStateWithLifecycle()
-    val activeFileIndex by viewModel.activeFileIndex.collectAsStateWithLifecycle()
-    val projectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
-    val executionState by viewModel.executionState.collectAsStateWithLifecycle()
-    val aiState by viewModel.aiState.collectAsStateWithLifecycle()
-    val saveState by viewModel.saveState.collectAsStateWithLifecycle()
-    val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
-    val fontSize by settingsViewModel.fontSize.collectAsStateWithLifecycle()
-    val lineNumbers by settingsViewModel.lineNumbers.collectAsStateWithLifecycle()
-    val autocompleteEnabled by settingsViewModel.autocomplete.collectAsStateWithLifecycle()
-    val wordWrap by settingsViewModel.wordWrap.collectAsStateWithLifecycle()
-    val allLanguages = remember { Language.values().toList() }
-
-    var showAiWriteDialog by remember { mutableStateOf(false) }
-    var showAiEditDialog by remember { mutableStateOf(false) }
-    var showSaveDialog by remember { mutableStateOf(false) }
-    var showNewFileDialog by remember { mutableStateOf(false) }
-    var showAddFileDialog by remember { mutableStateOf(false) }
-    var showHtmlPreview by remember { mutableStateOf(false) }
-    var showFindReplace by remember { mutableStateOf(false) }
-    var showTerminal by remember { mutableStateOf(false) }
-    var isTerminalFullScreen by remember { mutableStateOf(false) }
-    var findText by remember { mutableStateOf("") }
-    var replaceText by remember { mutableStateOf("") }
+    val uiState = rememberEditorUiState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-
-    // Detect keyboard visibility
-    val density = LocalDensity.current
-    val imeInsets = WindowInsets.ime
-    val isKeyboardVisible by remember {
-        derivedStateOf {
-            imeInsets.getBottom(density) > 0
-        }
-    }
-
-    // Save state notification
-    LaunchedEffect(saveState) {
-        if (saveState is UiState.Success) {
-            scope.launch {
-                snackbarHostState.showSnackbar("Project saved!", duration = SnackbarDuration.Short)
-            }
-            viewModel.resetSaveState()
-        }
-    }
-
-    // Show HTML preview when execution succeeds for HTML
-    LaunchedEffect(executionState) {
-        if (executionState is UiState.Success && language == Language.HTML) {
-            showHtmlPreview = true
-        }
-    }
-
     val context = LocalContext.current
 
-    BackHandler {
-        onNavigateToProjects()
-    }
+    BackHandler(onBack = onNavigateToProjects)
 
     val openDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri: Uri? ->
-            uri?.let {
-                try {
-                    context.contentResolver.openInputStream(it)?.use { inputStream ->
-                        val reader = BufferedReader(InputStreamReader(inputStream))
-                        val content = reader.readText()
-                        viewModel.updateCode(content)
-                        // Try to guess language from extension
-                        val path = it.path ?: ""
-                        val lang = when {
-                            path.endsWith(".py") -> Language.PYTHON
-                            path.endsWith(".js") -> Language.JAVASCRIPT
-                            path.endsWith(".html") -> Language.HTML
-                            path.endsWith(".css") -> Language.CSS
-                            path.endsWith(".java") -> Language.JAVA
-                            path.endsWith(".cpp") || path.endsWith(".cc") -> Language.CPP
-                            path.endsWith(".kt") -> Language.KOTLIN
-                            path.endsWith(".json") -> Language.JSON
-                            else -> null
-                        }
-                        if (lang != null) {
-                            viewModel.setLanguage(lang)
-                        }
+            uri ?: return@rememberLauncherForActivityResult
+            try {
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val reader = BufferedReader(InputStreamReader(inputStream))
+                    val content = reader.readText()
+                    viewModel.updateCode(content)
+
+                    val path = uri.path ?: ""
+                    val lang = when {
+                        path.endsWith(".py") -> Language.PYTHON
+                        path.endsWith(".js") -> Language.JAVASCRIPT
+                        path.endsWith(".html") -> Language.HTML
+                        path.endsWith(".css") -> Language.CSS
+                        path.endsWith(".java") -> Language.JAVA
+                        path.endsWith(".cpp") || path.endsWith(".cc") -> Language.CPP
+                        path.endsWith(".kt") -> Language.KOTLIN
+                        path.endsWith(".json") -> Language.JSON
+                        else -> null
                     }
-                } catch (e: Exception) {
-                    // Handle error
+                    if (lang != null) {
+                        viewModel.setLanguage(lang)
+                    }
                 }
+            } catch (_: Exception) {
             }
         }
     )
@@ -169,18 +147,29 @@ fun EditorScreen(
     val createDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("*/*"),
         onResult = { uri: Uri? ->
-            uri?.let {
-                try {
-                    context.contentResolver.openOutputStream(it)?.use { outputStream ->
-                        val writer = OutputStreamWriter(outputStream)
-                        writer.write(viewModel.currentCode.value)
-                        writer.flush()
-                    }
-                } catch (e: Exception) {
-                    // Handle error
+            uri ?: return@rememberLauncherForActivityResult
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                    val writer = OutputStreamWriter(outputStream)
+                    writer.write(viewModel.currentCode.value)
+                    writer.flush()
                 }
+            } catch (_: Exception) {
             }
         }
+    )
+
+    val openDocument: () -> Unit = remember(openDocumentLauncher) {
+        { openDocumentLauncher.launch(arrayOf("*/*")) }
+    }
+    val createDocument: (String) -> Unit = remember(createDocumentLauncher) {
+        { fileName -> createDocumentLauncher.launch(fileName) }
+    }
+
+    EditorScreenEffects(
+        viewModel = viewModel,
+        snackbarHostState = snackbarHostState,
+        onShowHtmlPreview = { uiState.showHtmlPreview = true }
     )
 
     Scaffold(
@@ -188,349 +177,665 @@ fun EditorScreen(
         contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = projectName,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = "${language.icon} ${language.displayName}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
-                actions = {
-                    // Language Selector
-                    LanguageSelectorMenu(
-                        currentLanguage = language,
-                        onLanguageSelected = { viewModel.setLanguage(it) }
-                    )
-                    // Terminal Toggle
-                    IconButton(onClick = { showTerminal = !showTerminal }) {
-                        Icon(Icons.Default.Terminal, "Toggle Terminal", tint = if (showTerminal) MaterialTheme.colorScheme.primary else LocalContentColor.current)
-                    }
-
-                    IconButton(onClick = { showSaveDialog = true }) {
-                        Icon(Icons.Default.Save, "Save")
-                    }
-
-                    // AI Features
-                    AiFeaturesMenu(
-                        onWriteCode = { showAiWriteDialog = true },
-                        onEditCode = { showAiEditDialog = true },
-                        onFixBug = { viewModel.fixBug() },
-                        onExplainCode = { viewModel.explainCode() },
-                        onImproveCode = { viewModel.improveCode() }
-                    )
-                    // More options
-                    var showMoreMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showMoreMenu = true }) {
-                            Icon(Icons.Default.MoreVert, "More")
-                        }
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("New File") },
-                                leadingIcon = { Icon(Icons.Default.Add, null) },
-                                onClick = {
-                                    showNewFileDialog = true
-                                    showMoreMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Save") },
-                                leadingIcon = { Icon(Icons.Default.Save, null) },
-                                onClick = {
-                                    showSaveDialog = true
-                                    showMoreMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Save to Device") },
-                                leadingIcon = { Icon(Icons.Default.Download, null) },
-                                onClick = {
-                                    val ext = when (language) {
-                                        Language.PYTHON -> ".py"
-                                        Language.JAVASCRIPT -> ".js"
-                                        Language.HTML -> ".html"
-                                        Language.CSS -> ".css"
-                                        Language.JAVA -> ".java"
-                                        Language.CPP -> ".cpp"
-                                        Language.KOTLIN -> ".kt"
-                                        Language.JSON -> ".json"
-                                    }
-                                    createDocumentLauncher.launch("${projectName.ifBlank { "untitled" }}$ext")
-                                    showMoreMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Open from Device") },
-                                leadingIcon = { Icon(Icons.Default.Upload, null) },
-                                onClick = {
-                                    openDocumentLauncher.launch(arrayOf("*/*"))
-                                    showMoreMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("My Projects") },
-                                leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
-                                onClick = {
-                                    onNavigateToProjects()
-                                    showMoreMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Find & Replace") },
-                                leadingIcon = { Icon(Icons.Default.FindReplace, null) },
-                                onClick = {
-                                    showFindReplace = !showFindReplace
-                                    showMoreMenu = false
-                                }
-                            )
-                            if (language == Language.HTML && htmlContent != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Preview HTML") },
-                                    leadingIcon = { Icon(Icons.Default.Visibility, null) },
-                                    onClick = {
-                                        showHtmlPreview = true
-                                        showMoreMenu = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
+            EditorTopBar(
+                viewModel = viewModel,
+                uiState = uiState,
+                onNavigateToProjects = onNavigateToProjects,
+                onOpenDocument = openDocument,
+                onCreateDocument = createDocument
             )
         },
         floatingActionButton = {
-            if (language in Language.executableLanguages()) {
-                Column(horizontalAlignment = Alignment.End) {
-                    SmallFloatingActionButton(
-                        onClick = { 
-                            showTerminal = true
-                            viewModel.runWithAiFix() 
-                        },
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    ) {
-                        Icon(Icons.Default.AutoFixHigh, "Run with AI Fix")
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    FloatingActionButton(
-                        onClick = { 
-                            showTerminal = true
-                            viewModel.runCode() 
-                        },
-                        containerColor = MaterialTheme.colorScheme.primary
-                    ) {
-                        Icon(Icons.Default.PlayArrow, "Run Code")
-                    }
-                }
-            }
+            EditorRunFab(
+                viewModel = viewModel,
+                uiState = uiState
+            )
         }
     ) { paddingValues ->
-        val code by viewModel.currentCode.collectAsStateWithLifecycle()
-        var selection by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0)) }
+        EditorMainContent(
+            viewModel = viewModel,
+            settingsViewModel = settingsViewModel,
+            uiState = uiState,
+            paddingValues = paddingValues
+        )
+    }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .consumeWindowInsets(paddingValues)
-        ) {
-            // File Tabs
-            if (files.isNotEmpty()) {
-                androidx.compose.material3.ScrollableTabRow(
-                    selectedTabIndex = activeFileIndex,
-                    edgePadding = 8.dp,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    files.forEachIndexed { index, file ->
-                        key(file.id) {
-                            androidx.compose.material3.Tab(
-                                selected = activeFileIndex == index,
-                                onClick = { viewModel.switchFile(index) },
-                                text = { Text(file.name) }
-                            )
-                        }
-                    }
-                    androidx.compose.material3.Tab(
-                        selected = false,
-                        onClick = { showAddFileDialog = true },
-                        text = { Icon(Icons.Default.Add, "Add File") }
-                    )
-                }
-            }
+    EditorDialogsHost(
+        viewModel = viewModel,
+        uiState = uiState
+    )
+}
 
-            // Find & Replace bar
-            AnimatedVisibility(visible = showFindReplace) {
-                FindReplaceBar(
-                    findText = findText,
-                    replaceText = replaceText,
-                    onFindChange = { findText = it },
-                    onReplaceChange = { replaceText = it },
-                    onReplace = {
-                        if (findText.isNotBlank()) {
-                            val newCode = code.replace(findText, replaceText)
-                            viewModel.updateCode(newCode)
-                        }
-                    },
-                    onClose = { showFindReplace = false }
+@Composable
+private fun EditorScreenEffects(
+    viewModel: EditorViewModel,
+    snackbarHostState: SnackbarHostState,
+    onShowHtmlPreview: () -> Unit
+) {
+    val saveState by viewModel.saveState.collectAsStateWithLifecycle()
+    val executionState by viewModel.executionState.collectAsStateWithLifecycle()
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+
+    LaunchedEffect(saveState) {
+        if (saveState is UiState.Success) {
+            snackbarHostState.showSnackbar(
+                message = "Project saved!",
+                duration = SnackbarDuration.Short
+            )
+            viewModel.resetSaveState()
+        }
+    }
+
+    LaunchedEffect(executionState, language) {
+        if (executionState is UiState.Success && language == Language.HTML) {
+            onShowHtmlPreview()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditorTopBar(
+    viewModel: EditorViewModel,
+    uiState: EditorUiState,
+    onNavigateToProjects: () -> Unit,
+    onOpenDocument: () -> Unit,
+    onCreateDocument: (String) -> Unit
+) {
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val projectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
+    val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
+
+    val onLanguageSelected = remember(viewModel) { { lang: Language -> viewModel.setLanguage(lang) } }
+    val onFixBug = remember(viewModel) { { viewModel.fixBug() } }
+    val onExplainCode = remember(viewModel) { { viewModel.explainCode() } }
+    val onImproveCode = remember(viewModel) { { viewModel.improveCode() } }
+
+    TopAppBar(
+        title = {
+            Column {
+                Text(
+                    text = projectName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1
+                )
+                Text(
+                    text = "${language.icon} ${language.displayName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
-
-            // Code Editor
-            if (!isTerminalFullScreen) {
-                Box(modifier = Modifier.weight(1f)) {
-                    if (aiState is UiState.Success && (aiState as UiState.Success<AiResult>).data.isEdit) {
-                        val result = (aiState as UiState.Success<AiResult>).data
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("AI Proposed Changes", style = MaterialTheme.typography.titleMedium)
-                                    val modifiedFiles = result.patches.map { it.fileName }.distinct()
-                                    if (modifiedFiles.isNotEmpty()) {
-                                        Text("Modified files: ${modifiedFiles.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                Row {
-                                    Button(onClick = { viewModel.applyAiEdit(result) }) {
-                                        Text("Accept")
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    OutlinedButton(onClick = viewModel::dismissAiResult) {
-                                        Text("Reject")
-                                    }
-                                }
-                            }
-
-                            DiffViewer(
-                                originalCode = code,
-                                newCode = if (files.isNotEmpty()) viewModel.getPreviewCode(files[activeFileIndex].name, result) else code,
-                                fontSize = fontSize,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    } else {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            val ghostSuggestion by viewModel.ghostSuggestion.collectAsStateWithLifecycle()
-                            val inlineDiffSuggestion by viewModel.inlineDiffSuggestion.collectAsStateWithLifecycle()
-                            CodeEditor(
-                                code = code,
-                                language = language,
-                                fontSize = fontSize,
-                                lineNumbers = lineNumbers,
-                                wordWrap = wordWrap,
-                                autocompleteEnabled = autocompleteEnabled,
-                                ghostSuggestion = ghostSuggestion,
-                                inlineDiffSuggestion = inlineDiffSuggestion,
-                                onCodeChange = {
-                                    viewModel.updateCode(it)
-                                },
-                                selection = selection,
-                                onSelectionChange = { 
-                                    selection = it 
-                                    if (ghostSuggestion != null || inlineDiffSuggestion != null) viewModel.rejectGhostSuggestion()
-                                    viewModel.requestGhostSuggestion(it.start)
-                                },
-                                onRejectGhostSuggestion = {
-                                    viewModel.rejectGhostSuggestion()
-                                },
-                                onAcceptGhostSuggestionLine = {
-                                    val length = viewModel.acceptGhostSuggestionLine(selection.start)
-                                    selection = androidx.compose.ui.text.TextRange(selection.start + length)
-                                },
-                                onAcceptGhostSuggestionFull = {
-                                    viewModel.acceptGhostSuggestion(selection.start)
-                                    selection = androidx.compose.ui.text.TextRange(selection.start + ghostSuggestion!!.length)
-                                },
-                                onAcceptInlineDiff = {
-                                    val length = viewModel.acceptInlineDiffSuggestion()
-                                    if (length > 0) {
-                                        val newSelection = viewModel.currentCode.value.indexOf(inlineDiffSuggestion!!.addText!!)
-                                        if (newSelection >= 0) {
-                                            selection = androidx.compose.ui.text.TextRange(newSelection + length)
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize()
-                            )
-                            // No more popup - suggestions are shown inline
-                        }
-                    }
-                }
-            }
-
-            // Terminal Panel
-            AnimatedVisibility(
-                visible = showTerminal,
-                enter = slideInVertically(initialOffsetY = { it }),
-                exit = slideOutVertically(targetOffsetY = { it }),
-                modifier = if (isTerminalFullScreen) Modifier.weight(1f) else Modifier
+        },
+        actions = {
+            LanguageSelectorMenu(
+                currentLanguage = language,
+                onLanguageSelected = onLanguageSelected
+            )
+            IconButton(
+                onClick = { uiState.showTerminal = !uiState.showTerminal }
             ) {
-                TerminalPanel(
-                    terminalManager = viewModel.terminalManager,
-                    isFullScreen = isTerminalFullScreen,
-                    onToggleFullScreen = { isTerminalFullScreen = !isTerminalFullScreen },
-                    onClear = { viewModel.terminalManager.clearTerminal() },
-                    onClose = { 
-                        showTerminal = false
-                        isTerminalFullScreen = false
-                    },
-                    onShowHtml = if (language == Language.HTML && htmlContent != null) {
-                        { showHtmlPreview = true }
-                    } else null,
-                    onSendInput = { input ->
-                        val isWaiting = viewModel.terminalManager.isWaitingForInput.value
-                        if (isWaiting) {
-                            viewModel.sendTerminalInput(input)
-                        } else {
-                            viewModel.chatWithAi(input)
-                        }
-                    },
-                    modifier = if (isTerminalFullScreen) Modifier.fillMaxSize() else Modifier
+                Icon(
+                    Icons.Default.Terminal,
+                    contentDescription = "Toggle Terminal",
+                    tint = if (uiState.showTerminal) MaterialTheme.colorScheme.primary else LocalContentColor.current
                 )
             }
-            
-            // Special Characters Bar - only visible when keyboard is open
-            if (isKeyboardVisible) {
-                SpecialCharactersBar(
-                    onCharacterClick = { char ->
-                        val currentCode = viewModel.currentCode.value
-                        val cursorPos = selection.start.coerceIn(0, currentCode.length)
-                        
-                        // Auto-close brackets and quotes
-                        val (insertText, cursorOffset) = when (char) {
-                            "(" -> "()" to 1
-                            "{" -> "{}" to 1
-                            "[" -> "[]" to 1
-                            "\"" -> "\"\"" to 1
-                            "'" -> "''" to 1
-                            "<" -> "<>" to 1
-                            else -> char to char.length
-                        }
-                        
-                        val newCode = currentCode.substring(0, cursorPos) + insertText + currentCode.substring(cursorPos)
-                        viewModel.updateCode(newCode)
-                        selection = androidx.compose.ui.text.TextRange(cursorPos + cursorOffset)
+            IconButton(onClick = { uiState.activeDialog = EditorDialogType.SAVE_PROJECT }) {
+                Icon(Icons.Default.Save, "Save")
+            }
+            AiFeaturesMenu(
+                onWriteCode = { uiState.activeDialog = EditorDialogType.AI_WRITE },
+                onEditCode = { uiState.activeDialog = EditorDialogType.AI_EDIT },
+                onFixBug = onFixBug,
+                onExplainCode = onExplainCode,
+                onImproveCode = onImproveCode
+            )
+            EditorMoreMenu(
+                language = language,
+                projectName = projectName,
+                canPreviewHtml = language == Language.HTML && htmlContent != null,
+                onNewFile = { uiState.activeDialog = EditorDialogType.NEW_FILE },
+                onSave = { uiState.activeDialog = EditorDialogType.SAVE_PROJECT },
+                onSaveToDevice = onCreateDocument,
+                onOpenFromDevice = onOpenDocument,
+                onNavigateToProjects = onNavigateToProjects,
+                onToggleFindReplace = { uiState.showFindReplace = !uiState.showFindReplace },
+                onPreviewHtml = { uiState.showHtmlPreview = true }
+            )
+        }
+    )
+}
+
+@Composable
+private fun EditorMoreMenu(
+    language: Language,
+    projectName: String,
+    canPreviewHtml: Boolean,
+    onNewFile: () -> Unit,
+    onSave: () -> Unit,
+    onSaveToDevice: (String) -> Unit,
+    onOpenFromDevice: () -> Unit,
+    onNavigateToProjects: () -> Unit,
+    onToggleFindReplace: () -> Unit,
+    onPreviewHtml: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.MoreVert, "More")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("New File") },
+                leadingIcon = { Icon(Icons.Default.Add, null) },
+                onClick = {
+                    onNewFile()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Save") },
+                leadingIcon = { Icon(Icons.Default.Save, null) },
+                onClick = {
+                    onSave()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Save to Device") },
+                leadingIcon = { Icon(Icons.Default.Download, null) },
+                onClick = {
+                    val ext = when (language) {
+                        Language.PYTHON -> ".py"
+                        Language.JAVASCRIPT -> ".js"
+                        Language.HTML -> ".html"
+                        Language.CSS -> ".css"
+                        Language.JAVA -> ".java"
+                        Language.CPP -> ".cpp"
+                        Language.KOTLIN -> ".kt"
+                        Language.JSON -> ".json"
+                    }
+                    onSaveToDevice("${projectName.ifBlank { "untitled" }}$ext")
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Open from Device") },
+                leadingIcon = { Icon(Icons.Default.Upload, null) },
+                onClick = {
+                    onOpenFromDevice()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("My Projects") },
+                leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
+                onClick = {
+                    onNavigateToProjects()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Find & Replace") },
+                leadingIcon = { Icon(Icons.Default.FindReplace, null) },
+                onClick = {
+                    onToggleFindReplace()
+                    expanded = false
+                }
+            )
+            if (canPreviewHtml) {
+                DropdownMenuItem(
+                    text = { Text("Preview HTML") },
+                    leadingIcon = { Icon(Icons.Default.Visibility, null) },
+                    onClick = {
+                        onPreviewHtml()
+                        expanded = false
                     }
                 )
             }
         }
     }
+}
 
-    // AI Result Dialog
+@Composable
+private fun EditorRunFab(
+    viewModel: EditorViewModel,
+    uiState: EditorUiState
+) {
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+
+    if (language !in Language.executableLanguages()) {
+        return
+    }
+
+    val onRunWithAiFix = remember(viewModel, uiState) {
+        {
+            uiState.showTerminal = true
+            viewModel.runWithAiFix()
+        }
+    }
+    val onRunCode = remember(viewModel, uiState) {
+        {
+            uiState.showTerminal = true
+            viewModel.runCode()
+        }
+    }
+
+    Column(horizontalAlignment = Alignment.End) {
+        SmallFloatingActionButton(
+            onClick = onRunWithAiFix,
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        ) {
+            Icon(Icons.Default.AutoFixHigh, "Run with AI Fix")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        FloatingActionButton(
+            onClick = onRunCode,
+            containerColor = MaterialTheme.colorScheme.primary
+        ) {
+            Icon(Icons.Default.PlayArrow, "Run Code")
+        }
+    }
+}
+
+@Composable
+private fun EditorMainContent(
+    viewModel: EditorViewModel,
+    settingsViewModel: SettingsViewModel,
+    uiState: EditorUiState,
+    paddingValues: PaddingValues
+) {
+    val selectionState = rememberEditorSelectionState()
+
+    val onCharacterClick = remember(viewModel) {
+        { char: String ->
+            val currentCode = viewModel.currentCode.value
+            val cursorPos = selectionState.value.start.coerceIn(0, currentCode.length)
+            val (insertText, cursorOffset) = when (char) {
+                "(" -> "()" to 1
+                "{" -> "{}" to 1
+                "[" -> "[]" to 1
+                "\"" -> "\"\"" to 1
+                "'" -> "''" to 1
+                "<" -> "<>" to 1
+                else -> char to char.length
+            }
+
+            val newCode = currentCode.substring(0, cursorPos) + insertText + currentCode.substring(cursorPos)
+            viewModel.updateCode(newCode)
+            selectionState.value = androidx.compose.ui.text.TextRange(cursorPos + cursorOffset)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues)
+            .consumeWindowInsets(paddingValues)
+    ) {
+        EditorFileTabs(
+            viewModel = viewModel,
+            onAddFile = { uiState.activeDialog = EditorDialogType.ADD_FILE }
+        )
+
+        EditorFindReplaceSection(
+            viewModel = viewModel,
+            uiState = uiState
+        )
+
+        EditorEditorSection(
+            viewModel = viewModel,
+            settingsViewModel = settingsViewModel,
+            uiState = uiState,
+            selectionState = selectionState
+        )
+
+        EditorTerminalSection(
+            viewModel = viewModel,
+            uiState = uiState
+        )
+
+        KeyboardAwareSpecialCharactersBar(
+            onCharacterClick = onCharacterClick
+        )
+    }
+}
+
+@Composable
+private fun EditorFindReplaceSection(
+    viewModel: EditorViewModel,
+    uiState: EditorUiState
+) {
+    AnimatedVisibility(visible = uiState.showFindReplace) {
+        EditorFindReplaceBar(
+            viewModel = viewModel,
+            uiState = uiState
+        )
+    }
+}
+
+@Composable
+private fun EditorEditorSection(
+    viewModel: EditorViewModel,
+    settingsViewModel: SettingsViewModel,
+    uiState: EditorUiState,
+    selectionState: EditorSelectionState
+) {
+    if (!uiState.isTerminalFullScreen) {
+        Box(modifier = Modifier.weight(1f)) {
+            EditorWorkArea(
+                viewModel = viewModel,
+                settingsViewModel = settingsViewModel,
+                selectionState = selectionState,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditorFileTabs(
+    viewModel: EditorViewModel,
+    onAddFile: () -> Unit
+) {
+    val files by viewModel.currentFiles.collectAsStateWithLifecycle()
+    val activeFileIndex by viewModel.activeFileIndex.collectAsStateWithLifecycle()
+    val onSwitchFile = remember(viewModel) { { index: Int -> viewModel.switchFile(index) } }
+
+    if (files.isEmpty()) {
+        return
+    }
+
+    androidx.compose.material3.ScrollableTabRow(
+        selectedTabIndex = activeFileIndex,
+        edgePadding = 8.dp,
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        files.forEachIndexed { index, file ->
+            key(file.id) {
+                androidx.compose.material3.Tab(
+                    selected = activeFileIndex == index,
+                    onClick = { onSwitchFile(index) },
+                    text = { Text(file.name) }
+                )
+            }
+        }
+        androidx.compose.material3.Tab(
+            selected = false,
+            onClick = onAddFile,
+            text = { Icon(Icons.Default.Add, "Add File") }
+        )
+    }
+}
+
+@Composable
+private fun EditorFindReplaceBar(
+    viewModel: EditorViewModel,
+    uiState: EditorUiState
+) {
+    val code by viewModel.currentCode.collectAsStateWithLifecycle()
+    val onUpdateCode = remember(viewModel) { { newCode: String -> viewModel.updateCode(newCode) } }
+
+    FindReplaceBar(
+        findText = uiState.findText,
+        replaceText = uiState.replaceText,
+        onFindChange = { uiState.findText = it },
+        onReplaceChange = { uiState.replaceText = it },
+        onReplace = {
+            if (uiState.findText.isNotBlank()) {
+                onUpdateCode(code.replace(uiState.findText, uiState.replaceText))
+            }
+        },
+        onClose = { uiState.showFindReplace = false }
+    )
+}
+
+@Composable
+private fun EditorWorkArea(
+    viewModel: EditorViewModel,
+    settingsViewModel: SettingsViewModel,
+    selectionState: EditorSelectionState,
+    modifier: Modifier = Modifier
+) {
+    val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+
+    Box(modifier = modifier) {
+        if (aiState is UiState.Success && (aiState as UiState.Success<AiResult>).data.isEdit) {
+            AiEditPreviewPane(
+                viewModel = viewModel,
+                settingsViewModel = settingsViewModel,
+                result = (aiState as UiState.Success<AiResult>).data
+            )
+        } else {
+            EditorCodePane(
+                viewModel = viewModel,
+                settingsViewModel = settingsViewModel,
+                selectionState = selectionState,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiEditPreviewPane(
+    viewModel: EditorViewModel,
+    settingsViewModel: SettingsViewModel,
+    result: AiResult
+) {
+    val code by viewModel.currentCode.collectAsStateWithLifecycle()
+    val files by viewModel.currentFiles.collectAsStateWithLifecycle()
+    val activeFileIndex by viewModel.activeFileIndex.collectAsStateWithLifecycle()
+    val fontSize by settingsViewModel.fontSize.collectAsStateWithLifecycle()
+    val modifiedFiles = remember(result) { result.patches.map { it.fileName }.distinct() }
+
+    val onApplyAiEdit = remember(viewModel) { { aiResult: AiResult -> viewModel.applyAiEdit(aiResult) } }
+    val onDismissAiResult = remember(viewModel) { { viewModel.dismissAiResult() } }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("AI Proposed Changes", style = MaterialTheme.typography.titleMedium)
+                if (modifiedFiles.isNotEmpty()) {
+                    Text(
+                        text = "Modified files: ${modifiedFiles.joinToString(", ")}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Row {
+                Button(onClick = { onApplyAiEdit(result) }) {
+                    Text("Accept")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(onClick = onDismissAiResult) {
+                    Text("Reject")
+                }
+            }
+        }
+
+        DiffViewer(
+            originalCode = code,
+            newCode = if (files.isNotEmpty()) {
+                viewModel.getPreviewCode(files[activeFileIndex].name, result)
+            } else {
+                code
+            },
+            fontSize = fontSize,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun EditorCodePane(
+    viewModel: EditorViewModel,
+    settingsViewModel: SettingsViewModel,
+    selectionState: EditorSelectionState,
+    modifier: Modifier = Modifier
+) {
+    val code by viewModel.currentCode.collectAsStateWithLifecycle()
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val fontSize by settingsViewModel.fontSize.collectAsStateWithLifecycle()
+    val lineNumbers by settingsViewModel.lineNumbers.collectAsStateWithLifecycle()
+    val autocompleteEnabled by settingsViewModel.autocomplete.collectAsStateWithLifecycle()
+    val wordWrap by settingsViewModel.wordWrap.collectAsStateWithLifecycle()
+    val ghostSuggestion by viewModel.ghostSuggestion.collectAsStateWithLifecycle()
+    val inlineDiffSuggestion by viewModel.inlineDiffSuggestion.collectAsStateWithLifecycle()
+
+    val selection = selectionState.value
+    val latestSelection = rememberUpdatedState(selection)
+    val onCodeChange = remember(viewModel) { { newCode: String -> viewModel.updateCode(newCode) } }
+    val onRejectGhostSuggestion = remember(viewModel) { { viewModel.rejectGhostSuggestion() } }
+    val onSelectionChangedInternal = remember(viewModel, selectionState) {
+        { newSelection: androidx.compose.ui.text.TextRange ->
+            selectionState.value = newSelection
+            if (viewModel.ghostSuggestion.value != null || viewModel.inlineDiffSuggestion.value != null) {
+                viewModel.rejectGhostSuggestion()
+            }
+            viewModel.requestGhostSuggestion(newSelection.start)
+        }
+    }
+    val onAcceptGhostSuggestionLine = remember(viewModel, selectionState) {
+        {
+            val cursor = latestSelection.value.start
+            val length = viewModel.acceptGhostSuggestionLine(cursor)
+            selectionState.value = androidx.compose.ui.text.TextRange(cursor + length)
+        }
+    }
+    val onAcceptGhostSuggestionFull = remember(viewModel, selectionState) {
+        {
+            val cursor = latestSelection.value.start
+            val suggestionLength = viewModel.ghostSuggestion.value?.length ?: 0
+            if (suggestionLength > 0) {
+                viewModel.acceptGhostSuggestion(cursor)
+                selectionState.value = androidx.compose.ui.text.TextRange(cursor + suggestionLength)
+            }
+        }
+    }
+    val onAcceptInlineDiff = remember(viewModel, selectionState) {
+        {
+            val suggestion = viewModel.inlineDiffSuggestion.value
+            val length = viewModel.acceptInlineDiffSuggestion()
+            if (length > 0) {
+                val addText = suggestion?.addText
+                if (addText != null) {
+                    val newSelection = viewModel.currentCode.value.indexOf(addText)
+                    if (newSelection >= 0) {
+                        selectionState.value = androidx.compose.ui.text.TextRange(newSelection + length)
+                    }
+                }
+            }
+        }
+    }
+
+    CodeEditor(
+        code = code,
+        language = language,
+        fontSize = fontSize,
+        lineNumbers = lineNumbers,
+        wordWrap = wordWrap,
+        autocompleteEnabled = autocompleteEnabled,
+        ghostSuggestion = ghostSuggestion,
+        inlineDiffSuggestion = inlineDiffSuggestion,
+        onCodeChange = onCodeChange,
+        selection = selection,
+        onSelectionChange = onSelectionChangedInternal,
+        onRejectGhostSuggestion = onRejectGhostSuggestion,
+        onAcceptGhostSuggestionLine = onAcceptGhostSuggestionLine,
+        onAcceptGhostSuggestionFull = onAcceptGhostSuggestionFull,
+        onAcceptInlineDiff = onAcceptInlineDiff,
+        modifier = modifier
+    )
+}
+@Composable
+private fun EditorTerminalSection(
+    viewModel: EditorViewModel,
+    uiState: EditorUiState
+) {
+    val onToggleFullScreen = remember(uiState) { { uiState.isTerminalFullScreen = !uiState.isTerminalFullScreen } }
+    val onClearTerminal = remember(viewModel) { { viewModel.terminalManager.clearTerminal() } }
+    val onCloseTerminal = remember(uiState) {
+        {
+            uiState.showTerminal = false
+            uiState.isTerminalFullScreen = false
+        }
+    }
+    val onSendInput = remember(viewModel) {
+        { input: String ->
+            if (viewModel.terminalManager.isWaitingForInput.value) {
+                viewModel.sendTerminalInput(input)
+            } else {
+                viewModel.chatWithAi(input)
+            }
+        }
+    }
+    val onShowHtmlPreview = remember(uiState) { { uiState.showHtmlPreview = true } }
+
+    AnimatedVisibility(
+        visible = uiState.showTerminal,
+        enter = slideInVertically(initialOffsetY = { it }),
+        exit = slideOutVertically(targetOffsetY = { it }),
+        modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
+    ) {
+        val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+        val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
+
+        TerminalPanel(
+            terminalManager = viewModel.terminalManager,
+            isFullScreen = uiState.isTerminalFullScreen,
+            onToggleFullScreen = onToggleFullScreen,
+            onClear = onClearTerminal,
+            onClose = onCloseTerminal,
+            onShowHtml = if (language == Language.HTML && htmlContent != null) onShowHtmlPreview else null,
+            onSendInput = onSendInput,
+            modifier = if (uiState.isTerminalFullScreen) Modifier.fillMaxSize() else Modifier
+        )
+    }
+}
+
+@Composable
+private fun KeyboardAwareSpecialCharactersBar(
+    onCharacterClick: (String) -> Unit
+) {
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val isKeyboardVisible by remember(density, imeInsets) {
+        derivedStateOf { imeInsets.getBottom(density) > 0 }
+    }
+
+    AnimatedVisibility(visible = isKeyboardVisible, enter = fadeIn(), exit = fadeOut()) {
+        SpecialCharactersBar(onCharacterClick = onCharacterClick)
+    }
+}
+
+@Composable
+private fun EditorDialogsHost(
+    viewModel: EditorViewModel,
+    uiState: EditorUiState
+) {
+    val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+    val projectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
+    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val currentCode by viewModel.currentCode.collectAsStateWithLifecycle()
+    val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
+
+    val onDismissAiResult = remember(viewModel) { { viewModel.dismissAiResult() } }
+    val onApplyAiCode = remember(viewModel) { { code: String -> viewModel.applyAiCode(code) } }
+    val onFollowUp = remember(viewModel) { { question: String -> viewModel.askFollowUpQuestion(question) } }
+
     if (aiState is UiState.Loading) {
         AiLoadingDialog()
     } else if (aiState is UiState.Success) {
@@ -539,174 +844,183 @@ fun EditorScreen(
             AiResultDialog(
                 result = result,
                 language = language,
-                onApply = { 
-                    viewModel.applyAiCode(it)
-                },
-                onDismiss = viewModel::dismissAiResult,
-                onAskFollowUp = viewModel::askFollowUpQuestion,
-                currentCode = viewModel.currentCode.value
+                onApply = onApplyAiCode,
+                onDismiss = onDismissAiResult,
+                onAskFollowUp = onFollowUp,
+                currentCode = currentCode
             )
         }
     } else if (aiState is UiState.Error) {
         AlertDialog(
-            onDismissRequest = viewModel::dismissAiResult,
+            onDismissRequest = onDismissAiResult,
             title = { Text("AI Error") },
             text = { Text((aiState as UiState.Error).message) },
             confirmButton = {
-                TextButton(onClick = viewModel::dismissAiResult) { Text("OK") }
+                TextButton(onClick = onDismissAiResult) { Text("OK") }
             }
         )
     }
 
-    // Save Dialog
-    if (showAiWriteDialog) {
-        var prompt by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAiWriteDialog = false },
-            title = { Text("Write Code with AI") },
-            text = {
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    label = { Text("Describe what you want to build or change") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (prompt.isNotBlank()) {
-                            viewModel.writeCodeWithAi(prompt)
-                            showAiWriteDialog = false
-                        }
-                    }
-                ) {
-                    Text("Generate")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAiWriteDialog = false }) { Text("Cancel") }
-            }
-        )
+    when (uiState.activeDialog) {
+        EditorDialogType.AI_WRITE -> {
+            AiPromptDialog(
+                title = "Write Code with AI",
+                label = "Describe what you want to build or change",
+                confirmText = "Generate",
+                onConfirm = { prompt ->
+                    viewModel.writeCodeWithAi(prompt)
+                    uiState.activeDialog = null
+                },
+                onDismiss = { uiState.activeDialog = null }
+            )
+        }
+        EditorDialogType.AI_EDIT -> {
+            AiPromptDialog(
+                title = "Edit Code with AI",
+                label = "Describe what you want to modify",
+                confirmText = "Edit",
+                onConfirm = { prompt ->
+                    viewModel.editCodeWithAi(prompt)
+                    uiState.activeDialog = null
+                },
+                onDismiss = { uiState.activeDialog = null }
+            )
+        }
+        EditorDialogType.SAVE_PROJECT -> {
+            SaveProjectDialog(
+                currentName = projectName,
+                onSave = { name ->
+                    viewModel.saveProject(name)
+                    uiState.activeDialog = null
+                },
+                onDismiss = { uiState.activeDialog = null }
+            )
+        }
+        EditorDialogType.NEW_FILE -> {
+            NewFileDialog(
+                onCreate = { lang ->
+                    viewModel.newFile(lang)
+                    uiState.activeDialog = null
+                },
+                onDismiss = { uiState.activeDialog = null }
+            )
+        }
+        EditorDialogType.ADD_FILE -> {
+            AddFileDialog(
+                onAdd = { name, selectedLang ->
+                    val nameWithExt = if (name.contains(".")) name else name + selectedLang.extension
+                    viewModel.addFile(nameWithExt, selectedLang)
+                    uiState.activeDialog = null
+                },
+                onDismiss = { uiState.activeDialog = null }
+            )
+        }
+        null -> Unit
     }
 
-    if (showAiEditDialog) {
-        var prompt by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAiEditDialog = false },
-            title = { Text("Edit Code with AI") },
-            text = {
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    label = { Text("Describe what you want to modify") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (prompt.isNotBlank()) {
-                            viewModel.editCodeWithAi(prompt)
-                            showAiEditDialog = false
-                        }
-                    }
-                ) {
-                    Text("Edit")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAiEditDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    if (showSaveDialog) {
-        SaveProjectDialog(
-            currentName = projectName,
-            onSave = { name ->
-                viewModel.saveProject(name)
-                showSaveDialog = false
-            },
-            onDismiss = { showSaveDialog = false }
-        )
-    }
-
-    // New File Dialog
-    if (showNewFileDialog) {
-        NewFileDialog(
-            onCreate = { lang ->
-                viewModel.newFile(lang)
-                showNewFileDialog = false
-            },
-            onDismiss = { showNewFileDialog = false }
-        )
-    }
-
-    // Add File Dialog
-    if (showAddFileDialog) {
-        var newFileName by remember { mutableStateOf("") }
-        var selectedLang by remember { mutableStateOf(Language.PYTHON) }
-        AlertDialog(
-            onDismissRequest = { showAddFileDialog = false },
-            title = { Text("Add File") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = newFileName,
-                        onValueChange = { newFileName = it },
-                        label = { Text("File Name") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Select language:", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(8.dp))
-                    allLanguages.forEach { lang ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedLang = lang }
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedLang == lang,
-                                onClick = { selectedLang = lang }
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("${lang.icon} ${lang.displayName}")
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newFileName.isNotBlank()) {
-                            val nameWithExt = if (newFileName.contains(".")) newFileName else newFileName + selectedLang.extension
-                            viewModel.addFile(nameWithExt, selectedLang)
-                            showAddFileDialog = false
-                        }
-                    }
-                ) {
-                    Text("Add")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddFileDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    // HTML Preview
-    if (showHtmlPreview && htmlContent != null) {
+    if (uiState.showHtmlPreview && htmlContent != null) {
         HtmlPreviewDialog(
-            htmlContent = htmlContent!!,
-            onDismiss = { showHtmlPreview = false }
+            htmlContent = htmlContent,
+            onDismiss = { uiState.showHtmlPreview = false }
         )
     }
+}
+
+@Composable
+private fun AiPromptDialog(
+    title: String,
+    label: String,
+    confirmText: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var prompt by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                label = { Text(label) },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (prompt.isNotBlank()) {
+                        onConfirm(prompt)
+                    }
+                }
+            ) {
+                Text(confirmText)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun AddFileDialog(
+    onAdd: (String, Language) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var newFileName by remember { mutableStateOf("") }
+    var selectedLang by remember { mutableStateOf(Language.PYTHON) }
+    val allLanguages = remember { Language.values().toList() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add File") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = newFileName,
+                    onValueChange = { newFileName = it },
+                    label = { Text("File Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Select language:", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                allLanguages.forEach { lang ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedLang = lang }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedLang == lang,
+                            onClick = { selectedLang = lang }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("${lang.icon} ${lang.displayName}")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (newFileName.isNotBlank()) {
+                        onAdd(newFileName, selectedLang)
+                    }
+                }
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -876,12 +1190,17 @@ fun CodeEditor(
         }
     }
 
-    val lineHeight = (fontSize * 1.5).sp
-    val codeTextStyle = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontSize = fontSize.sp,
-        lineHeight = lineHeight
-    )
+    val codeTextStyle = remember(fontSize) {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = fontSize.sp,
+            lineHeight = (fontSize * 1.5).sp
+        )
+    }
+    val transparentCodeTextStyle = remember(codeTextStyle) { codeTextStyle.copy(color = Color.Transparent) }
+    val lineNumberTextStyle = remember(codeTextStyle) {
+        codeTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+    }
 
     // Shared scroll state so line numbers scroll with code
     val verticalScrollState = rememberScrollState()
@@ -955,9 +1274,7 @@ fun CodeEditor(
                 ) {
                     Text(
                         text = lineNumbersText,
-                        style = codeTextStyle.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        ),
+                        style = lineNumberTextStyle,
                         textAlign = androidx.compose.ui.text.style.TextAlign.End
                     )
                 }
@@ -1006,8 +1323,11 @@ fun CodeEditor(
                     },
                     onTextLayout = { layoutResult ->
                         val cursorPosition = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
-                        cursorRect = layoutResult.getCursorRect(cursorPosition)
-                        
+                        val newCursorRect = layoutResult.getCursorRect(cursorPosition)
+                        if (newCursorRect != cursorRect) {
+                            cursorRect = newCursorRect
+                        }
+
                         // Calculate visual line info for word wrap mode
                         if (wordWrap) {
                             val lineCount = layoutResult.lineCount
@@ -1015,7 +1335,7 @@ fun CodeEditor(
                             val text = textFieldValue.text
                             var currentLogicalLine = 1
                             var charIndex = 0
-                            
+
                             for (visualLine in 0 until lineCount) {
                                 mapping[visualLine] = currentLogicalLine
                                 val lineEnd = layoutResult.getLineEnd(visualLine)
@@ -1026,7 +1346,11 @@ fun CodeEditor(
                                     charIndex++
                                 }
                             }
-                            visualLineInfo = Pair(lineCount, mapping)
+
+                            val newVisualInfo = lineCount to mapping
+                            if (newVisualInfo != visualLineInfo) {
+                                visualLineInfo = newVisualInfo
+                            }
                         }
                     },
                     modifier = Modifier
@@ -1087,7 +1411,7 @@ fun CodeEditor(
                             }
                             false
                         },
-                    textStyle = codeTextStyle.copy(color = Color.Transparent),
+                    textStyle = transparentCodeTextStyle,
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerTextField ->
                         Box {
@@ -1135,75 +1459,76 @@ fun CodeEditor(
                         modifier = Modifier.verticalScroll(rememberScrollState())
                     ) {
                         suggestions.forEach { item ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        // Insert completion: replace the prefix with the full text
-                                        val cursorPosition = textFieldValue.selection.start
-                                        val prefix = getWordPrefixForCompletion(textFieldValue.text, cursorPosition)
-                                        val before = textFieldValue.text.substring(0, cursorPosition - prefix.length)
-                                        val after = textFieldValue.text.substring(cursorPosition)
-                                        val newCode = before + item.insertText + after
-                                        
-                                        val newSelection = androidx.compose.ui.text.TextRange(cursorPosition - prefix.length + item.insertText.length + item.cursorOffset)
-                                        textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newCode, newSelection)
-                                        
-                                        onCodeChange(newCode)
-                                        onSelectionChange(newSelection)
-                                        showAutocomplete = false
-                                    }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = when (item.type) {
-                                    com.pocketdev.app.editor.CompletionType.KEYWORD -> "K"
-                                    com.pocketdev.app.editor.CompletionType.FUNCTION -> "F"
-                                    com.pocketdev.app.editor.CompletionType.METHOD -> "M"
-                                    com.pocketdev.app.editor.CompletionType.CLASS -> "C"
-                                    com.pocketdev.app.editor.CompletionType.VARIABLE -> "V"
-                                    com.pocketdev.app.editor.CompletionType.SNIPPET -> "S"
-                                    com.pocketdev.app.editor.CompletionType.TAG -> "T"
-                                    com.pocketdev.app.editor.CompletionType.PROPERTY -> "P"
-                                    com.pocketdev.app.editor.CompletionType.ATTRIBUTE -> "A"
-                                    com.pocketdev.app.editor.CompletionType.VALUE -> "V"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .background(
-                                        MaterialTheme.colorScheme.primaryContainer,
-                                        RoundedCornerShape(4.dp)
+                            key("${item.type}:${item.text}:${item.insertText}:${item.cursorOffset}") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            // Insert completion: replace the prefix with the full text
+                                            val cursorPosition = textFieldValue.selection.start
+                                            val prefix = getWordPrefixForCompletion(textFieldValue.text, cursorPosition)
+                                            val before = textFieldValue.text.substring(0, cursorPosition - prefix.length)
+                                            val after = textFieldValue.text.substring(cursorPosition)
+                                            val newCode = before + item.insertText + after
+
+                                            val newSelection = androidx.compose.ui.text.TextRange(cursorPosition - prefix.length + item.insertText.length + item.cursorOffset)
+                                            textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newCode, newSelection)
+
+                                            onCodeChange(newCode)
+                                            onSelectionChange(newSelection)
+                                            showAutocomplete = false
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = when (item.type) {
+                                            com.pocketdev.app.editor.CompletionType.KEYWORD -> "K"
+                                            com.pocketdev.app.editor.CompletionType.FUNCTION -> "F"
+                                            com.pocketdev.app.editor.CompletionType.METHOD -> "M"
+                                            com.pocketdev.app.editor.CompletionType.CLASS -> "C"
+                                            com.pocketdev.app.editor.CompletionType.VARIABLE -> "V"
+                                            com.pocketdev.app.editor.CompletionType.SNIPPET -> "S"
+                                            com.pocketdev.app.editor.CompletionType.TAG -> "T"
+                                            com.pocketdev.app.editor.CompletionType.PROPERTY -> "P"
+                                            com.pocketdev.app.editor.CompletionType.ATTRIBUTE -> "A"
+                                            com.pocketdev.app.editor.CompletionType.VALUE -> "V"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .background(
+                                                MaterialTheme.colorScheme.primaryContainer,
+                                                RoundedCornerShape(4.dp)
+                                            )
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
                                     )
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = item.text,
-                                    style = TextStyle(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    maxLines = 1
-                                )
-                                Text(
-                                    text = item.description,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.text,
+                                            style = TextStyle(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium
+                                            ),
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = item.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
                             }
                         }
-                    }
                 }
             }
         }
     }
-}
 }
 
 private fun getWordPrefixForCompletion(code: String, cursorPos: Int): String {
@@ -1561,7 +1886,7 @@ fun SaveProjectDialog(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var name by remember { mutableStateOf(currentName) }
+    var name by remember(currentName) { mutableStateOf(currentName) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
