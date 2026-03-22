@@ -496,7 +496,8 @@ private fun EditorMainContent(
 
         EditorTerminalSection(
             viewModel = viewModel,
-            uiState = uiState
+            uiState = uiState,
+            modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
         )
 
         KeyboardAwareSpecialCharactersBar(
@@ -765,7 +766,8 @@ private fun EditorCodePane(
 @Composable
 private fun EditorTerminalSection(
     viewModel: EditorViewModel,
-    uiState: EditorUiState
+    uiState: EditorUiState,
+    modifier: Modifier = Modifier
 ) {
     val onToggleFullScreen = remember(uiState) { { uiState.isTerminalFullScreen = !uiState.isTerminalFullScreen } }
     val onClearTerminal = remember(viewModel) { { viewModel.terminalManager.clearTerminal() } }
@@ -790,7 +792,7 @@ private fun EditorTerminalSection(
         visible = uiState.showTerminal,
         enter = slideInVertically(initialOffsetY = { it }),
         exit = slideOutVertically(targetOffsetY = { it }),
-        modifier = Modifier.then(if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier)
+        modifier = modifier
     ) {
         val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
         val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
