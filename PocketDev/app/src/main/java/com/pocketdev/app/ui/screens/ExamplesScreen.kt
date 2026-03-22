@@ -61,11 +61,14 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
                     )
                 }
                 items(filterLanguages, key = { it.name }) { lang ->
+                    val onSelectLanguage = remember(lang) {
+                        {
+                            selectedLanguage = if (selectedLanguage == lang) null else lang
+                        }
+                    }
                     FilterChip(
                         selected = selectedLanguage == lang,
-                        onClick = {
-                            selectedLanguage = if (selectedLanguage == lang) null else lang
-                        },
+                        onClick = onSelectLanguage,
                         label = { Text("${lang.icon} ${lang.displayName}") },
                         leadingIcon = if (selectedLanguage == lang) {
                             { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }

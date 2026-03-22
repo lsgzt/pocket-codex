@@ -29,8 +29,8 @@ fun ProjectsScreen(
     var showNewProjectDialog by remember { mutableStateOf(false) }
 
     val onOpenNewProjectDialog = remember { { showNewProjectDialog = true } }
-    val onSearchQueryChange = remember(viewModel) { { query: String -> viewModel.setSearchQuery(query) } }
-    val onClearSearch = remember(viewModel) { { viewModel.setSearchQuery("") } }
+    val onSearchQueryChange = remember { { query: String -> viewModel.setSearchQuery(query) } }
+    val onClearSearch = remember { { viewModel.setSearchQuery("") } }
     val onDismissDeleteDialog = remember { { showDeleteDialog = null } }
 
     Scaffold(
@@ -80,14 +80,14 @@ fun ProjectsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(projects, key = { it.id }) { project ->
-                        val onOpen = remember(project, viewModel, onOpenProject) {
+                        val onOpen = remember(project) {
                             {
                                 viewModel.loadProject(project)
                                 onOpenProject()
                             }
                         }
                         val onDelete = remember(project) { { showDeleteDialog = project } }
-                        val onDuplicate = remember(project, viewModel) { { viewModel.duplicateProject(project) } }
+                        val onDuplicate = remember(project) { { viewModel.duplicateProject(project) } }
 
                         ProjectCard(
                             project = project,

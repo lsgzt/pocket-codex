@@ -246,16 +246,16 @@ private fun EditorTopBar(
     val projectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
     val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
 
-    val onLanguageSelected = remember(viewModel) { { lang: Language -> viewModel.setLanguage(lang) } }
-    val onFixBug = remember(viewModel) { { viewModel.fixBug() } }
-    val onExplainCode = remember(viewModel) { { viewModel.explainCode() } }
-    val onImproveCode = remember(viewModel) { { viewModel.improveCode() } }
-    val onWriteCode = remember(uiState) { { uiState.activeDialog = EditorDialogType.AI_WRITE } }
-    val onEditCode = remember(uiState) { { uiState.activeDialog = EditorDialogType.AI_EDIT } }
-    val onOpenSaveDialog = remember(uiState) { { uiState.activeDialog = EditorDialogType.SAVE_PROJECT } }
-    val onOpenNewFileDialog = remember(uiState) { { uiState.activeDialog = EditorDialogType.NEW_FILE } }
-    val onToggleFindReplace = remember(uiState) { { uiState.showFindReplace = !uiState.showFindReplace } }
-    val onPreviewHtml = remember(uiState) { { uiState.showHtmlPreview = true } }
+    val onLanguageSelected = remember { { lang: Language -> viewModel.setLanguage(lang) } }
+    val onFixBug = remember { { viewModel.fixBug() } }
+    val onExplainCode = remember { { viewModel.explainCode() } }
+    val onImproveCode = remember { { viewModel.improveCode() } }
+    val onWriteCode = remember { { uiState.activeDialog = EditorDialogType.AI_WRITE } }
+    val onEditCode = remember { { uiState.activeDialog = EditorDialogType.AI_EDIT } }
+    val onOpenSaveDialog = remember { { uiState.activeDialog = EditorDialogType.SAVE_PROJECT } }
+    val onOpenNewFileDialog = remember { { uiState.activeDialog = EditorDialogType.NEW_FILE } }
+    val onToggleFindReplace = remember { { uiState.showFindReplace = !uiState.showFindReplace } }
+    val onPreviewHtml = remember { { uiState.showHtmlPreview = true } }
 
     TopAppBar(
         title = {
@@ -505,10 +505,13 @@ private fun EditorMainContent(
             modifier = Modifier.weight(1f)
         )
 
+        val terminalModifier by remember { derivedStateOf {
+            if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
+        }}
         EditorTerminalSection(
             viewModel = viewModel,
             uiState = uiState,
-            modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
+            modifier = terminalModifier
         )
 
         KeyboardAwareSpecialCharactersBar(
@@ -542,7 +545,8 @@ private fun EditorEditorSection(
     selectionState: EditorSelectionState,
     modifier: Modifier = Modifier
 ) {
-    if (!uiState.isTerminalFullScreen) {
+    val isFullScreen by remember { derivedStateOf { uiState.isTerminalFullScreen } }
+    if (!isFullScreen) {
         Box(modifier = modifier) {
             EditorWorkArea(
                 viewModel = viewModel,
@@ -1280,7 +1284,7 @@ fun CodeEditor(
     }
 
     // Update suggestions when code changes
-    LaunchedEffect(textFieldValue.text, textFieldValue.selection, language, autocompleteEnabled) {
+    LaunchedEffect(textFieldValue.text, language, autocompleteEnabled) {
         val cursorPosition = textFieldValue.selection.start
         if (autocompleteEnabled && cursorPosition <= textFieldValue.text.length) {
             val newSuggestions = withContext(Dispatchers.Default) {
@@ -1781,7 +1785,7 @@ private fun TerminalInputBar(
         terminalBaseTextStyle.copy(color = onSurfaceVariantColor2.copy(alpha = 0.5f))
     }
 
-    val submitInput = remember(onSendInput, inputText) {
+    val submitInput = remember(onSendInput) {
         {
             if (inputText.isNotBlank()) {
                 onSendInput(inputText)

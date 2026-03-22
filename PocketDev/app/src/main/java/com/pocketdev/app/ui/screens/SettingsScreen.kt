@@ -33,18 +33,18 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val apiKeyState by viewModel.apiKeyState.collectAsStateWithLifecycle()
     val aiModel by viewModel.aiModel.collectAsStateWithLifecycle()
 
-    val onSetTheme = remember(viewModel) { { value: String -> viewModel.setTheme(value) } }
-    val onSetFontSize = remember(viewModel) { { size: Int -> viewModel.setFontSize(size) } }
-    val onSetTabSize = remember(viewModel) { { size: Int -> viewModel.setTabSize(size) } }
-    val onSetLineNumbers = remember(viewModel) { { enabled: Boolean -> viewModel.setLineNumbers(enabled) } }
-    val onSetWordWrap = remember(viewModel) { { enabled: Boolean -> viewModel.setWordWrap(enabled) } }
-    val onSetAutoSave = remember(viewModel) { { enabled: Boolean -> viewModel.setAutoSave(enabled) } }
-    val onSetAutocomplete = remember(viewModel) { { enabled: Boolean -> viewModel.setAutocomplete(enabled) } }
-    val onSetGhostSuggestions = remember(viewModel) { { enabled: Boolean -> viewModel.setGhostSuggestions(enabled) } }
-    val onSetApiKey = remember(viewModel) { { key: String -> viewModel.setApiKey(key) } }
-    val onClearApiKey = remember(viewModel) { { viewModel.clearApiKey() } }
-    val onSetAiModel = remember(viewModel) { { model: String -> viewModel.setAiModel(model) } }
-    val onResetDefaults = remember(viewModel) { { viewModel.resetToDefaults() } }
+    val onSetTheme = remember { { value: String -> viewModel.setTheme(value) } }
+    val onSetFontSize = remember { { size: Int -> viewModel.setFontSize(size) } }
+    val onSetTabSize = remember { { size: Int -> viewModel.setTabSize(size) } }
+    val onSetLineNumbers = remember { { enabled: Boolean -> viewModel.setLineNumbers(enabled) } }
+    val onSetWordWrap = remember { { enabled: Boolean -> viewModel.setWordWrap(enabled) } }
+    val onSetAutoSave = remember { { enabled: Boolean -> viewModel.setAutoSave(enabled) } }
+    val onSetAutocomplete = remember { { enabled: Boolean -> viewModel.setAutocomplete(enabled) } }
+    val onSetGhostSuggestions = remember { { enabled: Boolean -> viewModel.setGhostSuggestions(enabled) } }
+    val onSetApiKey = remember { { key: String -> viewModel.setApiKey(key) } }
+    val onClearApiKey = remember { { viewModel.clearApiKey() } }
+    val onSetAiModel = remember { { model: String -> viewModel.setAiModel(model) } }
+    val onResetDefaults = remember { { viewModel.resetToDefaults() } }
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
@@ -189,20 +189,24 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         }
                     }
                     Spacer(Modifier.height(8.dp))
+                    val onModelTextChange = remember { { text: String -> modelText = text } }
+                    val onSaveModel = remember {
+                        {
+                            if (modelText.isNotBlank()) {
+                                onSetAiModel(modelText.trim())
+                            }
+                        }
+                    }
                     OutlinedTextField(
                         value = modelText,
-                        onValueChange = { modelText = it },
+                        onValueChange = onModelTextChange,
                         label = { Text("Model Name") },
                         placeholder = { Text("e.g. llama-3.3-70b-versatile") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             if (modelText != aiModel) {
-                                IconButton(onClick = {
-                                    if (modelText.isNotBlank()) {
-                                        onSetAiModel(modelText.trim())
-                                    }
-                                }) {
+                                IconButton(onClick = onSaveModel) {
                                     Icon(Icons.Default.Check, "Save model", tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
@@ -265,7 +269,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             }
 
-            // Font size slider
+            val onFontSizeChange = remember { { size: Float -> onSetFontSize(size.toInt()) } }
             SettingsItemWithContent(
                 icon = Icons.Default.TextFields,
                 title = "Font Size",
@@ -273,7 +277,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             ) {
                 Slider(
                     value = fontSize.toFloat(),
-                    onValueChange = { onSetFontSize(it.toInt()) },
+                    onValueChange = onFontSizeChange,
                     valueRange = 10f..22f,
                     steps = 11,
                     modifier = Modifier.width(140.dp)
