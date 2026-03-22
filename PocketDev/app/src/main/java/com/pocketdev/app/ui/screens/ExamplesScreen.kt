@@ -32,6 +32,7 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
     }
 
     val filterLanguages = remember { listOf(Language.PYTHON, Language.JAVASCRIPT, Language.HTML) }
+    val onClearLanguageFilter = remember { { selectedLanguage = null } }
 
     Scaffold(
         topBar = {
@@ -52,7 +53,7 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
                 item {
                     FilterChip(
                         selected = selectedLanguage == null,
-                        onClick = { selectedLanguage = null },
+                        onClick = onClearLanguageFilter,
                         label = { Text("All") },
                         leadingIcon = if (selectedLanguage == null) {
                             { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }
@@ -81,10 +82,12 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(filteredExamples, key = { "${it.language.name}:${it.title}" }) { example ->
+                    val onPreviewExample = remember(example) { { previewExample = example } }
+                    val onLoadSelectedExample = remember(example, onLoadExample) { { onLoadExample(example) } }
                     ExampleCard(
                         example = example,
-                        onPreview = { previewExample = example },
-                        onLoad = { onLoadExample(example) }
+                        onPreview = onPreviewExample,
+                        onLoad = onLoadSelectedExample
                     )
                 }
             }
@@ -93,13 +96,18 @@ fun ExamplesScreen(onLoadExample: (CodeExample) -> Unit) {
 
     // Preview dialog
     previewExample?.let { example ->
-        ExamplePreviewDialog(
-            example = example,
-            onLoad = {
+        val onLoadPreviewExample = remember(example, onLoadExample) {
+            {
                 onLoadExample(example)
                 previewExample = null
-            },
-            onDismiss = { previewExample = null }
+            }
+        }
+        val onDismissPreview = remember { { previewExample = null } }
+
+        ExamplePreviewDialog(
+            example = example,
+            onLoad = onLoadPreviewExample,
+            onDismiss = onDismissPreview
         )
     }
 }
@@ -113,6 +121,13 @@ fun ExampleCard(
 ) {
     val previewSnippet = remember(example.code) {
         example.code.lines().take(4).joinToString("\n")
+    }
+    val previewTextStyle = remember(MaterialTheme.colorScheme.onSurfaceVariant) {
+        androidx.compose.ui.text.TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 
     Card(
@@ -170,11 +185,7 @@ fun ExampleCard(
             ) {
                 Text(
                     text = previewSnippet,
-                    style = androidx.compose.ui.text.TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
+                    style = previewTextStyle,
                     modifier = Modifier.padding(8.dp),
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis
@@ -206,6 +217,14 @@ fun ExamplePreviewDialog(
     onDismiss: () -> Unit
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
+    val codeTextStyle = remember(MaterialTheme.colorScheme.onSurfaceVariant) {
+        androidx.compose.ui.text.TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 18.sp
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -237,12 +256,7 @@ fun ExamplePreviewDialog(
                     ) {
                         Text(
                             text = example.code,
-                            style = androidx.compose.ui.text.TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                lineHeight = 18.sp
-                            )
+                            style = codeTextStyle
                         )
                     }
                 }

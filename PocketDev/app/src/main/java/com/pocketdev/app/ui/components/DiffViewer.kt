@@ -41,7 +41,7 @@ fun DiffViewer(
     fontSize: Int,
     modifier: Modifier = Modifier
 ) {
-    var diffLines by remember(originalCode, newCode) { mutableStateOf<List<DiffLine>>(emptyList()) }
+    var diffLines by remember { mutableStateOf<List<DiffLine>>(emptyList()) }
 
     LaunchedEffect(originalCode, newCode) {
         diffLines = withContext(Dispatchers.Default) {
@@ -49,11 +49,13 @@ fun DiffViewer(
         }
     }
 
-    val codeTextStyle = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontSize = fontSize.sp,
-        lineHeight = (fontSize * 1.5).sp
-    )
+    val codeTextStyle = remember(fontSize) {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = fontSize.sp,
+            lineHeight = (fontSize * 1.5).sp
+        )
+    }
     val horizontalScrollState = rememberScrollState()
 
     LazyColumn(

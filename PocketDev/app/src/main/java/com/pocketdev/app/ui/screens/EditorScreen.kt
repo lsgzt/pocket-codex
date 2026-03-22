@@ -4,6 +4,7 @@ import android.webkit.WebView
 import android.webkit.WebChromeClient
 import android.webkit.WebViewClient
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.SpanStyle
@@ -250,6 +250,12 @@ private fun EditorTopBar(
     val onFixBug = remember(viewModel) { { viewModel.fixBug() } }
     val onExplainCode = remember(viewModel) { { viewModel.explainCode() } }
     val onImproveCode = remember(viewModel) { { viewModel.improveCode() } }
+    val onWriteCode = remember(uiState) { { uiState.activeDialog = EditorDialogType.AI_WRITE } }
+    val onEditCode = remember(uiState) { { uiState.activeDialog = EditorDialogType.AI_EDIT } }
+    val onOpenSaveDialog = remember(uiState) { { uiState.activeDialog = EditorDialogType.SAVE_PROJECT } }
+    val onOpenNewFileDialog = remember(uiState) { { uiState.activeDialog = EditorDialogType.NEW_FILE } }
+    val onToggleFindReplace = remember(uiState) { { uiState.showFindReplace = !uiState.showFindReplace } }
+    val onPreviewHtml = remember(uiState) { { uiState.showHtmlPreview = true } }
 
     TopAppBar(
         title = {
@@ -271,21 +277,13 @@ private fun EditorTopBar(
                 currentLanguage = language,
                 onLanguageSelected = onLanguageSelected
             )
-            IconButton(
-                onClick = { uiState.showTerminal = !uiState.showTerminal }
-            ) {
-                Icon(
-                    Icons.Default.Terminal,
-                    contentDescription = "Toggle Terminal",
-                    tint = if (uiState.showTerminal) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                )
-            }
-            IconButton(onClick = { uiState.activeDialog = EditorDialogType.SAVE_PROJECT }) {
+            TerminalToggleButton(uiState = uiState)
+            IconButton(onClick = onOpenSaveDialog) {
                 Icon(Icons.Default.Save, "Save")
             }
             AiFeaturesMenu(
-                onWriteCode = { uiState.activeDialog = EditorDialogType.AI_WRITE },
-                onEditCode = { uiState.activeDialog = EditorDialogType.AI_EDIT },
+                onWriteCode = onWriteCode,
+                onEditCode = onEditCode,
                 onFixBug = onFixBug,
                 onExplainCode = onExplainCode,
                 onImproveCode = onImproveCode
@@ -294,16 +292,28 @@ private fun EditorTopBar(
                 language = language,
                 projectName = projectName,
                 canPreviewHtml = language == Language.HTML && htmlContent != null,
-                onNewFile = { uiState.activeDialog = EditorDialogType.NEW_FILE },
-                onSave = { uiState.activeDialog = EditorDialogType.SAVE_PROJECT },
+                onNewFile = onOpenNewFileDialog,
+                onSave = onOpenSaveDialog,
                 onSaveToDevice = onCreateDocument,
                 onOpenFromDevice = onOpenDocument,
                 onNavigateToProjects = onNavigateToProjects,
-                onToggleFindReplace = { uiState.showFindReplace = !uiState.showFindReplace },
-                onPreviewHtml = { uiState.showHtmlPreview = true }
+                onToggleFindReplace = onToggleFindReplace,
+                onPreviewHtml = onPreviewHtml
             )
         }
     )
+}
+
+@Composable
+private fun TerminalToggleButton(uiState: EditorUiState) {
+    IconButton(onClick = { uiState.showTerminal = !uiState.showTerminal }) {
+        Icon(
+            imageVector = Icons.Default.Terminal,
+            contentDescription = "Toggle Terminal",
+            tint = if (uiState.showTerminal) MaterialTheme.colorScheme.primary
+            else LocalContentColor.current
+        )
+    }
 }
 
 @Composable
@@ -449,6 +459,7 @@ private fun EditorMainContent(
     paddingValues: PaddingValues
 ) {
     val selectionState = rememberEditorSelectionState()
+    val onAddFile = remember(uiState) { { uiState.activeDialog = EditorDialogType.ADD_FILE } }
 
     val onCharacterClick = remember(viewModel) {
         { char: String ->
@@ -478,7 +489,7 @@ private fun EditorMainContent(
     ) {
         EditorFileTabs(
             viewModel = viewModel,
-            onAddFile = { uiState.activeDialog = EditorDialogType.ADD_FILE }
+            onAddFile = onAddFile
         )
 
         EditorFindReplaceSection(
@@ -511,7 +522,11 @@ private fun EditorFindReplaceSection(
     viewModel: EditorViewModel,
     uiState: EditorUiState
 ) {
-    AnimatedVisibility(visible = uiState.showFindReplace) {
+    AnimatedVisibility(
+        visible = uiState.showFindReplace,
+        enter = fadeIn(animationSpec = tween(durationMillis = 120)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 80))
+    ) {
         EditorFindReplaceBar(
             viewModel = viewModel,
             uiState = uiState
@@ -582,18 +597,24 @@ private fun EditorFindReplaceBar(
 ) {
     val code by viewModel.currentCode.collectAsStateWithLifecycle()
     val onUpdateCode = remember(viewModel) { { newCode: String -> viewModel.updateCode(newCode) } }
+    val onFindChange = remember(uiState) { { text: String -> uiState.findText = text } }
+    val onReplaceChange = remember(uiState) { { text: String -> uiState.replaceText = text } }
+    val onReplace = remember(uiState, code, onUpdateCode) {
+        {
+            if (uiState.findText.isNotBlank()) {
+                onUpdateCode(code.replace(uiState.findText, uiState.replaceText))
+            }
+        }
+    }
+    val onClose = remember(uiState) { { uiState.showFindReplace = false } }
 
     FindReplaceBar(
         findText = uiState.findText,
         replaceText = uiState.replaceText,
-        onFindChange = { uiState.findText = it },
-        onReplaceChange = { uiState.replaceText = it },
-        onReplace = {
-            if (uiState.findText.isNotBlank()) {
-                onUpdateCode(code.replace(uiState.findText, uiState.replaceText))
-            }
-        },
-        onClose = { uiState.showFindReplace = false }
+        onFindChange = onFindChange,
+        onReplaceChange = onReplaceChange,
+        onReplace = onReplace,
+        onClose = onClose
     )
 }
 
@@ -820,7 +841,11 @@ private fun KeyboardAwareSpecialCharactersBar(
         derivedStateOf { imeInsets.getBottom(density) > 0 }
     }
 
-    AnimatedVisibility(visible = isKeyboardVisible, enter = fadeIn(), exit = fadeOut()) {
+    AnimatedVisibility(
+        visible = isKeyboardVisible,
+        enter = fadeIn(animationSpec = tween(durationMillis = 150, delayMillis = 200)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 100))
+    ) {
         SpecialCharactersBar(onCharacterClick = onCharacterClick)
     }
 }
@@ -831,14 +856,42 @@ private fun EditorDialogsHost(
     uiState: EditorUiState
 ) {
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
-    val projectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
-    val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
-    val currentCode by viewModel.currentCode.collectAsStateWithLifecycle()
-    val htmlContent by viewModel.htmlContent.collectAsStateWithLifecycle()
 
     val onDismissAiResult = remember(viewModel) { { viewModel.dismissAiResult() } }
     val onApplyAiCode = remember(viewModel) { { code: String -> viewModel.applyAiCode(code) } }
     val onFollowUp = remember(viewModel) { { question: String -> viewModel.askFollowUpQuestion(question) } }
+    val onCloseDialog = remember(uiState) { { uiState.activeDialog = null } }
+    val onConfirmAiWrite = remember(viewModel, uiState) {
+        { prompt: String ->
+            viewModel.writeCodeWithAi(prompt)
+            uiState.activeDialog = null
+        }
+    }
+    val onConfirmAiEdit = remember(viewModel, uiState) {
+        { prompt: String ->
+            viewModel.editCodeWithAi(prompt)
+            uiState.activeDialog = null
+        }
+    }
+    val onSaveProject = remember(viewModel, uiState) {
+        { name: String ->
+            viewModel.saveProject(name)
+            uiState.activeDialog = null
+        }
+    }
+    val onCreateNewFile = remember(viewModel, uiState) {
+        { lang: Language ->
+            viewModel.newFile(lang)
+            uiState.activeDialog = null
+        }
+    }
+    val onAddFile = remember(viewModel, uiState) {
+        { name: String, selectedLang: Language ->
+            val nameWithExt = if (name.contains(".")) name else name + selectedLang.extension
+            viewModel.addFile(nameWithExt, selectedLang)
+            uiState.activeDialog = null
+        }
+    }
 
     if (aiState is UiState.Loading) {
         AiLoadingDialog()
@@ -847,11 +900,11 @@ private fun EditorDialogsHost(
         if (!result.isEdit) {
             AiResultDialog(
                 result = result,
-                language = language,
+                language = viewModel.currentLanguage.value,
                 onApply = onApplyAiCode,
                 onDismiss = onDismissAiResult,
                 onAskFollowUp = onFollowUp,
-                currentCode = currentCode
+                currentCode = viewModel.currentCode.value
             )
         }
     } else if (aiState is UiState.Error) {
@@ -871,11 +924,8 @@ private fun EditorDialogsHost(
                 title = "Write Code with AI",
                 label = "Describe what you want to build or change",
                 confirmText = "Generate",
-                onConfirm = { prompt ->
-                    viewModel.writeCodeWithAi(prompt)
-                    uiState.activeDialog = null
-                },
-                onDismiss = { uiState.activeDialog = null }
+                onConfirm = onConfirmAiWrite,
+                onDismiss = onCloseDialog
             )
         }
         EditorDialogType.AI_EDIT -> {
@@ -883,45 +933,33 @@ private fun EditorDialogsHost(
                 title = "Edit Code with AI",
                 label = "Describe what you want to modify",
                 confirmText = "Edit",
-                onConfirm = { prompt ->
-                    viewModel.editCodeWithAi(prompt)
-                    uiState.activeDialog = null
-                },
-                onDismiss = { uiState.activeDialog = null }
+                onConfirm = onConfirmAiEdit,
+                onDismiss = onCloseDialog
             )
         }
         EditorDialogType.SAVE_PROJECT -> {
             SaveProjectDialog(
-                currentName = projectName,
-                onSave = { name ->
-                    viewModel.saveProject(name)
-                    uiState.activeDialog = null
-                },
-                onDismiss = { uiState.activeDialog = null }
+                currentName = viewModel.currentProjectName.value,
+                onSave = onSaveProject,
+                onDismiss = onCloseDialog
             )
         }
         EditorDialogType.NEW_FILE -> {
             NewFileDialog(
-                onCreate = { lang ->
-                    viewModel.newFile(lang)
-                    uiState.activeDialog = null
-                },
-                onDismiss = { uiState.activeDialog = null }
+                onCreate = onCreateNewFile,
+                onDismiss = onCloseDialog
             )
         }
         EditorDialogType.ADD_FILE -> {
             AddFileDialog(
-                onAdd = { name, selectedLang ->
-                    val nameWithExt = if (name.contains(".")) name else name + selectedLang.extension
-                    viewModel.addFile(nameWithExt, selectedLang)
-                    uiState.activeDialog = null
-                },
-                onDismiss = { uiState.activeDialog = null }
+                onAdd = onAddFile,
+                onDismiss = onCloseDialog
             )
         }
         null -> Unit
     }
 
+    val htmlContent = viewModel.htmlContent.value
     if (uiState.showHtmlPreview && htmlContent != null) {
         HtmlPreviewDialog(
             htmlContent = htmlContent!!,
@@ -1132,7 +1170,9 @@ fun CodeEditor(
         }
     }
 
-    val highlightedCode = remember(
+    val highlightedCode = if (ghostSuggestion == null && inlineDiffSuggestion == null) {
+        baseHighlightedCode
+    } else remember(
         baseHighlightedCode,
         ghostSuggestion,
         inlineDiffSuggestion,
@@ -1228,6 +1268,15 @@ fun CodeEditor(
         } else {
             0.dp
         }
+    }
+    val autocompletePopupShape = remember { RoundedCornerShape(8.dp) }
+    val autocompleteBadgeShape = remember { RoundedCornerShape(4.dp) }
+    val autocompleteItemTextStyle = remember {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium
+        )
     }
 
     // Update suggestions when code changes
@@ -1455,7 +1504,7 @@ fun CodeEditor(
                     modifier = Modifier
                         .widthIn(min = 200.dp, max = 320.dp)
                         .heightIn(max = 180.dp),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = autocompletePopupShape,
                     shadowElevation = 8.dp,
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 4.dp
@@ -1505,7 +1554,7 @@ fun CodeEditor(
                                         modifier = Modifier
                                             .background(
                                                 MaterialTheme.colorScheme.primaryContainer,
-                                                RoundedCornerShape(4.dp)
+                                                autocompleteBadgeShape
                                             )
                                             .padding(horizontal = 4.dp, vertical = 2.dp)
                                     )
@@ -1513,11 +1562,7 @@ fun CodeEditor(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = item.text,
-                                            style = TextStyle(
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Medium
-                                            ),
+                                            style = autocompleteItemTextStyle,
                                             maxLines = 1
                                         )
                                         Text(
@@ -1563,8 +1608,12 @@ fun TerminalPanel(
     val listState = rememberLazyListState()
 
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isEmpty()) return@LaunchedEffect
+
+        val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        val wasNearBottom = lastVisibleIndex == -1 || lastVisibleIndex >= messages.lastIndex - 1
+        if (wasNearBottom) {
+            listState.scrollToItem(messages.lastIndex)
         }
     }
 
@@ -1576,164 +1625,208 @@ fun TerminalPanel(
         tonalElevation = 4.dp
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Terminal,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "Terminal",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.weight(1f))
-                if (onShowHtml != null) {
-                    TextButton(onClick = onShowHtml, modifier = Modifier.height(28.dp)) {
-                        Text("Preview HTML", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-                IconButton(onClick = onToggleFullScreen, modifier = Modifier.size(28.dp)) {
-                    Icon(
-                        if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                        "Toggle Fullscreen",
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-                IconButton(onClick = onClear, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.Delete, "Clear terminal", modifier = Modifier.size(16.dp))
-                }
-                IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.Close, "Close terminal", modifier = Modifier.size(16.dp))
-                }
-            }
+            TerminalPanelHeader(
+                isFullScreen = isFullScreen,
+                onShowHtml = onShowHtml,
+                onToggleFullScreen = onToggleFullScreen,
+                onClear = onClear,
+                onClose = onClose
+            )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 
-            if (messages.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(12.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Text(
-                        text = "(no output)",
-                        style = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    state = listState,
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    itemsIndexed(
-                        items = messages,
-                        key = { index, msg -> "$index:${msg.type}:${msg.text.hashCode()}" }
-                    ) { _, msg ->
-                        val color = when (msg.type) {
-                            com.pocketdev.app.execution.TerminalMessageType.NORMAL -> MaterialTheme.colorScheme.onSurface
-                            com.pocketdev.app.execution.TerminalMessageType.ERROR -> Color(0xFFEF9A9A)
-                            com.pocketdev.app.execution.TerminalMessageType.AGENT -> Color(0xFF81C784)
-                            com.pocketdev.app.execution.TerminalMessageType.STATUS -> Color(0xFF64B5F6)
-                            com.pocketdev.app.execution.TerminalMessageType.INPUT_PROMPT -> Color(0xFFFFD54F)
-                        }
-                        Text(
-                            text = msg.text,
-                            style = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
-                                color = color
-                            )
-                        )
-                    }
-                }
-            }
+            TerminalMessagesList(
+                messages = messages,
+                listState = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
 
             if (onSendInput != null) {
-                var inputText by remember { mutableStateOf("") }
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surface
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = ">",
-                            style = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                        BasicTextField(
-                            value = inputText,
-                            onValueChange = { inputText = it },
-                            textStyle = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                imeAction = androidx.compose.ui.text.input.ImeAction.Send
-                            ),
-                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                                onSend = {
-                                    if (inputText.isNotBlank()) {
-                                        onSendInput(inputText)
-                                        inputText = ""
-                                    }
-                                }
-                            ),
-                            decorationBox = { innerTextField ->
-                                if (inputText.isEmpty()) {
-                                    Text(
-                                        if (isWaitingForInput) "Enter input for script..." else "Type input here...",
-                                        style = TextStyle(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                        )
-                                    )
-                                }
-                                innerTextField()
-                            }
-                        )
-                        IconButton(
-                            onClick = {
-                                if (inputText.isNotBlank()) {
-                                    onSendInput(inputText)
-                                    inputText = ""
-                                }
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Default.Send, "Send", modifier = Modifier.size(18.dp))
-                        }
-                    }
+                TerminalInputBar(
+                    isWaitingForInput = isWaitingForInput,
+                    onSendInput = onSendInput
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TerminalPanelHeader(
+    isFullScreen: Boolean,
+    onShowHtml: (() -> Unit)?,
+    onToggleFullScreen: () -> Unit,
+    onClear: () -> Unit,
+    onClose: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Default.Terminal,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            "Terminal",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.weight(1f))
+        if (onShowHtml != null) {
+            TextButton(onClick = onShowHtml, modifier = Modifier.height(28.dp)) {
+                Text("Preview HTML", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        IconButton(onClick = onToggleFullScreen, modifier = Modifier.size(28.dp)) {
+            Icon(
+                if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                "Toggle Fullscreen",
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        IconButton(onClick = onClear, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Default.Delete, "Clear terminal", modifier = Modifier.size(16.dp))
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Default.Close, "Close terminal", modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun TerminalMessagesList(
+    messages: List<com.pocketdev.app.execution.TerminalMessage>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier = Modifier
+) {
+    val terminalBaseTextStyle = remember {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp
+        )
+    }
+    val normalTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurface) {
+        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurface)
+    }
+    val emptyTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurfaceVariant) {
+        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+    }
+    val errorTextStyle = remember(terminalBaseTextStyle) { terminalBaseTextStyle.copy(color = Color(0xFFEF9A9A)) }
+    val agentTextStyle = remember(terminalBaseTextStyle) { terminalBaseTextStyle.copy(color = Color(0xFF81C784)) }
+    val statusTextStyle = remember(terminalBaseTextStyle) { terminalBaseTextStyle.copy(color = Color(0xFF64B5F6)) }
+    val inputPromptTextStyle = remember(terminalBaseTextStyle) { terminalBaseTextStyle.copy(color = Color(0xFFFFD54F)) }
+
+    if (messages.isEmpty()) {
+        Box(
+            modifier = modifier.padding(12.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Text(text = "(no output)", style = emptyTextStyle)
+        }
+    } else {
+        LazyColumn(
+            modifier = modifier,
+            state = listState,
+            contentPadding = PaddingValues(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            itemsIndexed(
+                items = messages,
+                key = { index, msg -> "$index:${msg.type}:${msg.text.hashCode()}" }
+            ) { _, msg ->
+                val style = when (msg.type) {
+                    com.pocketdev.app.execution.TerminalMessageType.NORMAL -> normalTextStyle
+                    com.pocketdev.app.execution.TerminalMessageType.ERROR -> errorTextStyle
+                    com.pocketdev.app.execution.TerminalMessageType.AGENT -> agentTextStyle
+                    com.pocketdev.app.execution.TerminalMessageType.STATUS -> statusTextStyle
+                    com.pocketdev.app.execution.TerminalMessageType.INPUT_PROMPT -> inputPromptTextStyle
                 }
+                Text(text = msg.text, style = style)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TerminalInputBar(
+    isWaitingForInput: Boolean,
+    onSendInput: (String) -> Unit
+) {
+    var inputText by remember { mutableStateOf("") }
+    val terminalBaseTextStyle = remember {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp
+        )
+    }
+    val promptTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.primary) {
+        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.primary)
+    }
+    val inputTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurface) {
+        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurface)
+    }
+    val placeholderTextStyle = remember(terminalBaseTextStyle, MaterialTheme.colorScheme.onSurfaceVariant) {
+        terminalBaseTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+    }
+
+    val submitInput = remember(onSendInput, inputText) {
+        {
+            if (inputText.isNotBlank()) {
+                onSendInput(inputText)
+                inputText = ""
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = ">",
+                style = promptTextStyle,
+                modifier = Modifier.padding(end = 4.dp)
+            )
+            BasicTextField(
+                value = inputText,
+                onValueChange = { inputText = it },
+                textStyle = inputTextStyle,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onSend = { submitInput() }
+                ),
+                decorationBox = { innerTextField ->
+                    if (inputText.isEmpty()) {
+                        Text(
+                            if (isWaitingForInput) "Enter input for script..." else "Type input here...",
+                            style = placeholderTextStyle
+                        )
+                    }
+                    innerTextField()
+                }
+            )
+            IconButton(
+                onClick = submitInput,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(Icons.Default.Send, "Send", modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -1748,6 +1841,13 @@ fun FindReplaceBar(
     onReplace: () -> Unit,
     onClose: () -> Unit
 ) {
+    val fieldTextStyle = remember {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp
+        )
+    }
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.fillMaxWidth()
@@ -1760,7 +1860,7 @@ fun FindReplaceBar(
                     placeholder = { Text("Find", style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                    textStyle = fieldTextStyle
                 )
                 Spacer(Modifier.width(4.dp))
                 OutlinedTextField(
@@ -1769,7 +1869,7 @@ fun FindReplaceBar(
                     placeholder = { Text("Replace", style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                    textStyle = fieldTextStyle
                 )
                 Spacer(Modifier.width(4.dp))
                 Button(onClick = onReplace, modifier = Modifier.height(48.dp)) {
@@ -1810,6 +1910,14 @@ fun AiResultDialog(
 ) {
     val scrollState = rememberScrollState()
     var followUpText by remember { mutableStateOf("") }
+    val proposedCodeShape = remember { RoundedCornerShape(8.dp) }
+    val proposedCodeTextStyle = remember(MaterialTheme.colorScheme.onSurfaceVariant) {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1835,12 +1943,12 @@ fun AiResultDialog(
                         Spacer(modifier = Modifier.height(8.dp))
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = proposedCodeShape,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
                                 text = result.correctedCode,
-                                style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant),
+                                style = proposedCodeTextStyle,
                                 modifier = Modifier.padding(8.dp)
                             )
                         }
@@ -2214,6 +2322,14 @@ fun SpecialCharactersBar(
     }
     val scrollState = rememberScrollState()
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val chipShape = remember { RoundedCornerShape(4.dp) }
+    val chipTextStyle = remember {
+        TextStyle(
+            fontFamily = FontFamily.Monospace,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -2238,18 +2354,14 @@ fun SpecialCharactersBar(
                             }
                             .background(
                                 MaterialTheme.colorScheme.surfaceVariant,
-                                RoundedCornerShape(4.dp)
+                                chipShape
                             )
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = char,
-                            style = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium
-                            ),
+                            style = chipTextStyle,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }

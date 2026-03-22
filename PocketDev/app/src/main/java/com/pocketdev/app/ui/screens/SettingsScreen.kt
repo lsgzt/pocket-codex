@@ -33,6 +33,19 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val apiKeyState by viewModel.apiKeyState.collectAsStateWithLifecycle()
     val aiModel by viewModel.aiModel.collectAsStateWithLifecycle()
 
+    val onSetTheme = remember(viewModel) { { value: String -> viewModel.setTheme(value) } }
+    val onSetFontSize = remember(viewModel) { { size: Int -> viewModel.setFontSize(size) } }
+    val onSetTabSize = remember(viewModel) { { size: Int -> viewModel.setTabSize(size) } }
+    val onSetLineNumbers = remember(viewModel) { { enabled: Boolean -> viewModel.setLineNumbers(enabled) } }
+    val onSetWordWrap = remember(viewModel) { { enabled: Boolean -> viewModel.setWordWrap(enabled) } }
+    val onSetAutoSave = remember(viewModel) { { enabled: Boolean -> viewModel.setAutoSave(enabled) } }
+    val onSetAutocomplete = remember(viewModel) { { enabled: Boolean -> viewModel.setAutocomplete(enabled) } }
+    val onSetGhostSuggestions = remember(viewModel) { { enabled: Boolean -> viewModel.setGhostSuggestions(enabled) } }
+    val onSetApiKey = remember(viewModel) { { key: String -> viewModel.setApiKey(key) } }
+    val onClearApiKey = remember(viewModel) { { viewModel.clearApiKey() } }
+    val onSetAiModel = remember(viewModel) { { model: String -> viewModel.setAiModel(model) } }
+    val onResetDefaults = remember(viewModel) { { viewModel.resetToDefaults() } }
+
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var showApiKeyInfo by remember { mutableStateOf(false) }
@@ -125,7 +138,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                     }
                     if (apiKeyState is SettingsViewModel.ApiKeyState.Set) {
                         OutlinedButton(
-                            onClick = { viewModel.clearApiKey() },
+                            onClick = onClearApiKey,
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error
@@ -187,7 +200,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                             if (modelText != aiModel) {
                                 IconButton(onClick = {
                                     if (modelText.isNotBlank()) {
-                                        viewModel.setAiModel(modelText.trim())
+                                        onSetAiModel(modelText.trim())
                                     }
                                 }) {
                                     Icon(Icons.Default.Check, "Save model", tint = MaterialTheme.colorScheme.primary)
@@ -242,7 +255,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         themeOptions.forEach { (value, label) ->
                                 DropdownMenuItem(
                                     text = { Text(label) },
-                                    onClick = { viewModel.setTheme(value); expanded = false },
+                                    onClick = { onSetTheme(value); expanded = false },
                                     leadingIcon = if (theme == value) {
                                         { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) }
                                     } else null
@@ -260,7 +273,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             ) {
                 Slider(
                     value = fontSize.toFloat(),
-                    onValueChange = { viewModel.setFontSize(it.toInt()) },
+                    onValueChange = { onSetFontSize(it.toInt()) },
                     valueRange = 10f..22f,
                     steps = 11,
                     modifier = Modifier.width(140.dp)
@@ -278,7 +291,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                     tabSizes.forEach { size ->
                         FilterChip(
                             selected = tabSize == size,
-                            onClick = { viewModel.setTabSize(size) },
+                            onClick = { onSetTabSize(size) },
                             label = { Text("$size") },
                             modifier = Modifier.padding(horizontal = 2.dp)
                         )
@@ -291,7 +304,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 title = "Line Numbers",
                 subtitle = "Show line numbers in editor",
                 checked = lineNumbers,
-                onCheckedChange = viewModel::setLineNumbers
+                onCheckedChange = onSetLineNumbers
             )
 
             SettingsSwitchItem(
@@ -299,7 +312,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 title = "Word Wrap",
                 subtitle = "Wrap long lines to fit screen",
                 checked = wordWrap,
-                onCheckedChange = viewModel::setWordWrap
+                onCheckedChange = onSetWordWrap
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -312,7 +325,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 title = "Auto Save",
                 subtitle = "Save changes automatically every 30 seconds",
                 checked = autoSave,
-                onCheckedChange = viewModel::setAutoSave
+                onCheckedChange = onSetAutoSave
             )
 
             SettingsSwitchItem(
@@ -320,7 +333,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 title = "Autocomplete",
                 subtitle = "Show code completion suggestions",
                 checked = autocomplete,
-                onCheckedChange = viewModel::setAutocomplete
+                onCheckedChange = onSetAutocomplete
             )
 
             SettingsSwitchItem(
@@ -328,7 +341,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 title = "AI Ghost Suggestions",
                 subtitle = "Show inline AI code suggestions",
                 checked = ghostSuggestions,
-                onCheckedChange = viewModel::setGhostSuggestions
+                onCheckedChange = onSetGhostSuggestions
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -383,7 +396,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     if (showApiKeyDialog) {
         ApiKeyDialog(
             onSave = { key ->
-                viewModel.setApiKey(key)
+                onSetApiKey(key)
                 showApiKeyDialog = false
             },
             onDismiss = { showApiKeyDialog = false }
@@ -400,7 +413,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.resetToDefaults()
+                        onResetDefaults()
                         showResetDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(

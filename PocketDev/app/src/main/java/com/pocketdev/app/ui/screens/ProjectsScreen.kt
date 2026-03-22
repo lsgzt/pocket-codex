@@ -28,12 +28,17 @@ fun ProjectsScreen(
     var showDeleteDialog by remember { mutableStateOf<Project?>(null) }
     var showNewProjectDialog by remember { mutableStateOf(false) }
 
+    val onOpenNewProjectDialog = remember { { showNewProjectDialog = true } }
+    val onSearchQueryChange = remember(viewModel) { { query: String -> viewModel.setSearchQuery(query) } }
+    val onClearSearch = remember(viewModel) { { viewModel.setSearchQuery("") } }
+    val onDismissDeleteDialog = remember { { showDeleteDialog = null } }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("My Projects") },
                 actions = {
-                    IconButton(onClick = { showNewProjectDialog = true }) {
+                    IconButton(onClick = onOpenNewProjectDialog) {
                         Icon(Icons.Default.Add, "New Project")
                     }
                 }
@@ -49,12 +54,12 @@ fun ProjectsScreen(
             // Search bar
             OutlinedTextField(
                 value = searchQuery,
-                onValueChange = viewModel::setSearchQuery,
+                onValueChange = onSearchQueryChange,
                 placeholder = { Text("Search projects...") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = {
                     if (searchQuery.isNotBlank()) {
-                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                        IconButton(onClick = onClearSearch) {
                             Icon(Icons.Default.Clear, "Clear search")
                         }
                     }
@@ -67,7 +72,7 @@ fun ProjectsScreen(
 
             if (projects.isEmpty()) {
                 EmptyProjectsView(
-                    onCreateNew = { showNewProjectDialog = true }
+                    onCreateNew = onOpenNewProjectDialog
                 )
             } else {
                 LazyColumn(
@@ -75,14 +80,20 @@ fun ProjectsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(projects, key = { it.id }) { project ->
-                        ProjectCard(
-                            project = project,
-                            onClick = {
+                        val onOpen = remember(project, viewModel, onOpenProject) {
+                            {
                                 viewModel.loadProject(project)
                                 onOpenProject()
-                            },
-                            onDelete = { showDeleteDialog = project },
-                            onDuplicate = { viewModel.duplicateProject(project) }
+                            }
+                        }
+                        val onDelete = remember(project) { { showDeleteDialog = project } }
+                        val onDuplicate = remember(project, viewModel) { { viewModel.duplicateProject(project) } }
+
+                        ProjectCard(
+                            project = project,
+                            onClick = onOpen,
+                            onDelete = onDelete,
+                            onDuplicate = onDuplicate
                         )
                     }
                 }
@@ -93,7 +104,7 @@ fun ProjectsScreen(
     // Delete confirmation
     showDeleteDialog?.let { project ->
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = null },
+            onDismissRequest = onDismissDeleteDialog,
             icon = { Icon(Icons.Default.DeleteForever, null, tint = MaterialTheme.colorScheme.error) },
             title = { Text("Delete Project?") },
             text = { Text("Are you sure you want to delete \"${project.name}\"? This cannot be undone.") },
@@ -101,7 +112,7 @@ fun ProjectsScreen(
                 Button(
                     onClick = {
                         viewModel.deleteProject(project)
-                        showDeleteDialog = null
+                        onDismissDeleteDialog()
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
@@ -111,21 +122,26 @@ fun ProjectsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel") }
+                TextButton(onClick = onDismissDeleteDialog) { Text("Cancel") }
             }
         )
     }
 
     // New project dialog
     if (showNewProjectDialog) {
-        NewProjectDialog(
-            onCreate = { name, language ->
+        val onCreateProject = remember(viewModel, onOpenProject) {
+            { name: String, language: com.pocketdev.app.data.models.Language ->
                 viewModel.newFile(language)
                 viewModel.saveProject(name)
                 showNewProjectDialog = false
                 onOpenProject()
-            },
-            onDismiss = { showNewProjectDialog = false }
+            }
+        }
+        val onDismissNewProject = remember { { showNewProjectDialog = false } }
+
+        NewProjectDialog(
+            onCreate = onCreateProject,
+            onDismiss = onDismissNewProject
         )
     }
 }
