@@ -1933,3 +1933,6 @@ fun SpecialCharactersBar(
         }
     }
 }
+
+}
+}
