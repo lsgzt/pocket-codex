@@ -1199,98 +1199,85 @@ fun CodeEditor(
     }
 
     // Use a stable highlighter state that persists across recompositions
+    // This maintains the token cache for incremental updates
     val highlighterState = remember { SyntaxHighlighterState() }
-    var baseHighlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
     
-    // Track previous code to detect actual changes
-    var previousCode by remember { mutableStateOf(textFieldValue.text) }
-    
-    LaunchedEffect(textFieldValue.text, language) {
-        // Only process if code actually changed
-        if (textFieldValue.text != previousCode || highlighterState.currentLanguage != language) {
-            previousCode = textFieldValue.text
-            highlighterState.currentLanguage = language
-            
-            // Debounce: small delay to batch rapid typing
-            delay(16) // ~60fps, feels instant but batches rapid keystrokes
-            
-            baseHighlightedCode = withContext(Dispatchers.Default) {
-                // Incremental highlight - only process changed lines
-                highlighterState.highlightIncremental(textFieldValue.text, language)
-            }
-        }
+    // STABLE highlighted code that persists across recompositions
+    // The key insight: we DON'T recompute on every keystroke
+    // Instead, we update the highlighted code incrementally and only when needed
+    // This prevents the "white flash" by keeping the previous highlighting visible
+    var highlightedCodeState by remember {
+        mutableStateOf(androidx.compose.ui.text.AnnotatedString(""))
     }
-
+    
+    // Compute highlighted code SYNCHRONOUSLY using derivedStateOf
+    // This is efficient because:
+    // 1. derivedStateOf only triggers when the result actually changes
+    // 2. Our incremental highlighting preserves unchanged tokens
+    // 3. We NEVER show plain text - always start from previous highlighting
     val highlightedCode by remember {
         derivedStateOf {
-            if (ghostSuggestion == null && inlineDiffSuggestion == null) {
-                if (textFieldValue.text == baseHighlightedCode.text) {
-                    baseHighlightedCode
-                } else {
-                    // While highlighting is catching up, show raw text to avoid any perceived delay
-                    androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
-                }
-            } else {
-                // Apply ghost suggestions or inline diffs
-                when {
-                    ghostSuggestion != null -> {
-                        val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
-                        val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-                        val baseToUse = if (textFieldValue.text == baseHighlightedCode.text) baseHighlightedCode 
-                                      else androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
-                        
-                        builder.append(baseToUse.subSequence(0, cursor))
-                        builder.withStyle(
-                            SpanStyle(
-                                color = Color(0xFF888888),
-                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                            )
-                        ) {
-                            append(ghostSuggestion)
-                        }
-                        builder.append(baseToUse.subSequence(cursor, baseToUse.length))
-                        builder.toAnnotatedString()
-                    }
+            val currentText = textFieldValue.text
+            val result = highlighterState.highlightIncremental(currentText, language)
+            // Update the stable state for next time
+            highlightedCodeState = result
+            result
+        }
+    }
+    
+    // Apply ghost suggestions or inline diffs on top of highlighted code
+    val displayCode = when {
+        ghostSuggestion != null -> {
+            val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
+            val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+            builder.append(highlightedCode.subSequence(0, cursor))
+            builder.withStyle(
+                SpanStyle(
+                    color = Color(0xFF888888),
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+            ) {
+                append(ghostSuggestion)
+            }
+            builder.append(highlightedCode.subSequence(cursor, highlightedCode.length))
+            builder.toAnnotatedString()
+        }
+        
+        inlineDiffSuggestion != null &&
+            inlineDiffSuggestion.deleteText != null &&
+            inlineDiffSuggestion.addText != null -> {
+            val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+            val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
+            val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
 
-                    inlineDiffSuggestion != null &&
-                        inlineDiffSuggestion.deleteText != null &&
-                        inlineDiffSuggestion.addText != null -> {
-                        val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-                        val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
-                        val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
+            builder.append(textFieldValue.text.substring(0, deleteStart))
 
-                        builder.append(textFieldValue.text.substring(0, deleteStart))
-
-                        if (deleteEnd > deleteStart) {
-                            builder.withStyle(
-                                SpanStyle(
-                                    color = Color(0xFFE53935),
-                                    background = Color(0x33FFCDD2),
-                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
-                                )
-                            ) {
-                                append(textFieldValue.text.substring(deleteStart, deleteEnd))
-                            }
-                        }
-
-                        builder.withStyle(
-                            SpanStyle(
-                                color = Color(0xFF2E7D32),
-                                background = Color(0x33C8E6C9)
-                            )
-                        ) {
-                            append(inlineDiffSuggestion.addText)
-                        }
-
-                        builder.append(textFieldValue.text.substring(deleteEnd))
-                        builder.toAnnotatedString()
-                    }
-
-                    else -> if (textFieldValue.text == baseHighlightedCode.text) baseHighlightedCode 
-                            else androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
+            if (deleteEnd > deleteStart) {
+                builder.withStyle(
+                    SpanStyle(
+                        color = Color(0xFFE53935),
+                        background = Color(0x33FFCDD2),
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
+                    )
+                ) {
+                    append(textFieldValue.text.substring(deleteStart, deleteEnd))
                 }
             }
+
+            builder.withStyle(
+                SpanStyle(
+                    color = Color(0xFF2E7D32),
+                    background = Color(0x33C8E6C9)
+                )
+            ) {
+                append(inlineDiffSuggestion.addText)
+            }
+
+            builder.append(textFieldValue.text.substring(deleteEnd))
+            builder.toAnnotatedString()
         }
+        
+        else -> highlightedCode
     }
 
 
@@ -2227,139 +2214,127 @@ internal data class SyntaxToken(
 
 /**
  * Stateful highlighter that maintains a TOKEN cache for truly incremental updates.
- * Only re-highlights tokens that intersect with the changed region.
- * This is much more efficient than line-level caching.
+ * 
+ * KEY OPTIMIZATION: Instead of re-highlighting everything, we:
+ * 1. Keep a cache of all highlighted tokens
+ * 2. On change, find the minimal region that needs re-highlighting
+ * 3. Preserve ALL other highlighting exactly as-is
+ * 
+ * This eliminates the "white flash" because old highlighting is always visible
+ * while new highlighting is being computed.
  */
 class SyntaxHighlighterState {
-    // Token cache - stores all highlighted tokens
-    private var tokenCache: MutableList<SyntaxToken> = mutableListOf()
+    // Token cache - stores all highlighted tokens with their positions
+    private var tokenCache: List<SyntaxToken> = emptyList()
     
     var currentLanguage: Language? = null
-        set(value) {
-            if (field != value) {
-                // Language changed, clear cache
-                tokenCache.clear()
-                cachedCode = ""
-                cachedResult = null
-            }
-            field = value
-        }
+        private set
     
+    // Cached code and result for quick return
     private var cachedCode: String = ""
     private var cachedResult: androidx.compose.ui.text.AnnotatedString? = null
     
     /**
-     * Truly incremental highlighting - only processes tokens in changed region.
-     * This is the key optimization: we find the exact diff range and only
-     * re-highlight tokens that intersect with that range.
+     * Incremental highlighting that ONLY re-processes changed tokens.
+     * 
+     * Algorithm:
+     * 1. Find exact change region (start, end in new code)
+     * 2. Find tokens that overlap with change region
+     * 3. Keep tokens before change region unchanged
+     * 4. Keep tokens after change region (adjust positions)
+     * 5. Re-tokenize ONLY the affected region
      */
     fun highlightIncremental(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
-        // Check if we can use cached result (exact same code)
+        // Quick return for exact same code
         if (code == cachedCode && cachedResult != null && currentLanguage == language) {
             return cachedResult!!
         }
         
-        // First time or language change - do full highlight
-        if (cachedCode.isEmpty() || currentLanguage != language) {
+        // Language change requires full rebuild
+        if (currentLanguage != language) {
             currentLanguage = language
-            tokenCache = SyntaxHighlighter.tokenizeAll(code, language).toMutableList()
+            tokenCache = SyntaxHighlighter.tokenizeAll(code, language)
             cachedCode = code
             cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
             return cachedResult!!
         }
         
-        // Find the exact change region
-        val (changeStart, changeEnd) = findChangeRegion(cachedCode, code)
-        
-        // If no actual change (shouldn't happen but safety check)
-        if (changeStart == -1) {
+        // First time - do full highlight
+        if (cachedCode.isEmpty()) {
+            tokenCache = SyntaxHighlighter.tokenizeAll(code, language)
+            cachedCode = code
+            cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
             return cachedResult!!
         }
         
-        // Find tokens that intersect with the change region
-        val (tokensBefore, tokensAfter, affectedTokens) = partitionTokensByChange(tokenCache, changeStart, changeEnd, cachedCode, code)
+        // INCREMENTAL UPDATE
+        val lengthDelta = code.length - cachedCode.length
         
-        // Calculate the text region to re-tokenize (expand to include full tokens)
-        val retokenizeStart = if (tokensBefore.isEmpty()) 0 else tokensBefore.last().end
-        val retokenizeEnd = if (tokensAfter.isEmpty()) code.length else tokensAfter.first().start
-        
-        // Re-tokenize only the affected region
-        val regionText = code.substring(retokenizeStart, retokenizeEnd.coerceAtMost(code.length))
-        val newTokens = SyntaxHighlighter.tokenizeRegion(regionText, language, retokenizeStart)
-        
-        // Update the token cache
-        tokenCache = (tokensBefore + newTokens + tokensAfter).toMutableList()
-        
-        cachedCode = code
-        cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
-        return cachedResult!!
-    }
-    
-    /**
-     * Finds the exact character range that changed between old and new code.
-     */
-    private fun findChangeRegion(oldCode: String, newCode: String): Pair<Int, Int> {
-        // Find start of change
-        var start = 0
-        val minLen = minOf(oldCode.length, newCode.length)
-        while (start < minLen && oldCode[start] == newCode[start]) {
-            start++
+        // Find change boundaries
+        var changeStart = 0
+        val minLen = minOf(cachedCode.length, code.length)
+        while (changeStart < minLen && cachedCode[changeStart] == code[changeStart]) {
+            changeStart++
         }
         
-        // No change
-        if (start == minLen && oldCode.length == newCode.length) {
-            return -1 to -1
+        // No actual change (shouldn't reach here but safety check)
+        if (changeStart == minLen && cachedCode.length == code.length) {
+            return cachedResult!!
         }
         
-        // Find end of change (from the end)
-        var oldEnd = oldCode.length - 1
-        var newEnd = newCode.length - 1
-        while (oldEnd >= start && newEnd >= start && oldCode[oldEnd] == newCode[newEnd]) {
+        // Find change end from the back
+        var oldEnd = cachedCode.length - 1
+        var newEnd = code.length - 1
+        while (oldEnd >= changeStart && newEnd >= changeStart && cachedCode[oldEnd] == code[newEnd]) {
             oldEnd--
             newEnd--
         }
+        val changeEnd = newEnd + 1
         
-        // Return the range in NEW code that changed
-        return start to (newEnd + 1)
-    }
-    
-    /**
-     * Partitions tokens into three groups: before change, after change, and affected.
-     */
-    private fun partitionTokensByChange(
-        tokens: List<SyntaxToken>,
-        changeStart: Int,
-        changeEnd: Int,
-        oldCode: String,
-        newCode: String
-    ): Triple<List<SyntaxToken>, List<SyntaxToken>, List<SyntaxToken>> {
-        // Calculate the length delta
-        val lengthDelta = newCode.length - oldCode.length
+        // Partition tokens:
+        // - beforeTokens: tokens that END before changeStart (unchanged)
+        // - afterTokens: tokens that START after oldEnd+1 (just need position adjustment)
+        // - affected: tokens in between (need re-tokenizing)
         
-        // Find tokens completely before the change region
-        val beforeTokens = tokens.takeWhile { it.end <= changeStart }
+        val beforeTokens = mutableListOf<SyntaxToken>()
+        val afterTokens = mutableListOf<SyntaxToken>()
         
-        // Find tokens completely after the change region (need to adjust positions)
-        val afterTokens = tokens.dropWhile { it.end <= changeStart }
-            .dropWhile { it.start < changeEnd - lengthDelta } // Skip affected tokens
-            .map { token ->
-                // Adjust token positions for the length change
-                token.copy(
-                    start = token.start + lengthDelta,
-                    end = token.end + lengthDelta
-                )
+        for (token in tokenCache) {
+            when {
+                token.end <= changeStart -> {
+                    // Token is completely before the change - keep as-is
+                    beforeTokens.add(token)
+                }
+                token.start > oldEnd + 1 -> {
+                    // Token is completely after the change - adjust position
+                    afterTokens.add(token.copy(
+                        start = token.start + lengthDelta,
+                        end = token.end + lengthDelta
+                    ))
+                }
+                // Token overlaps with change region - will be re-tokenized
+                // (implicitly skipped, will be part of newTokens)
             }
+        }
         
-        // Affected tokens are those in between (will be replaced)
-        val affectedStart = beforeTokens.size
-        val affectedEnd = tokens.size - afterTokens.size
+        // Calculate region to re-tokenize
+        // Start: end of last beforeToken, or 0 if none
+        // End: start of first afterToken (in new coordinates), or code.length if none
+        val retokenizeStart = beforeTokens.lastOrNull()?.end ?: 0
+        val retokenizeEnd = afterTokens.firstOrNull()?.start ?: code.length
         
-        return Triple(beforeTokens, afterTokens, tokens.subList(affectedStart, affectedEnd))
+        // Re-tokenize the affected region
+        val regionText = code.substring(retokenizeStart, retokenizeEnd.coerceAtMost(code.length))
+        val newTokens = SyntaxHighlighter.tokenizeRegion(regionText, language, retokenizeStart)
+        
+        // Update cache
+        tokenCache = beforeTokens + newTokens + afterTokens
+        cachedCode = code
+        cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
+        
+        return cachedResult!!
     }
     
-    /**
-     * Builds an AnnotatedString from tokens efficiently.
-     */
     private fun buildAnnotatedStringFromTokens(code: String, tokens: List<SyntaxToken>): androidx.compose.ui.text.AnnotatedString {
         return buildAnnotatedString {
             var lastEnd = 0
@@ -2391,7 +2366,7 @@ class SyntaxHighlighterState {
     }
     
     fun clear() {
-        tokenCache.clear()
+        tokenCache = emptyList()
         cachedCode = ""
         cachedResult = null
     }
