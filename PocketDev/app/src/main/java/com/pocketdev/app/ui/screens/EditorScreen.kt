@@ -2215,6 +2215,25 @@ object SyntaxHighlighter {
     private val colorDefault = Color(0xFFCDD9E5)
     private val colorPreprocessor = Color(0xFFC586C0)
 
+    private enum class MultiLineState {
+        NORMAL,
+        IN_PYTHON_DOCSTRING,
+        IN_JS_COMMENT,
+        IN_HTML_COMMENT,
+        IN_CSS_COMMENT
+    }
+
+    private data class HighlightedLine(
+        val text: String,
+        val annotatedString: androidx.compose.ui.text.AnnotatedString,
+        val endState: MultiLineState
+    )
+
+    // Cache to store highlighted lines for the current file
+    private var lineCache = mutableListOf<HighlightedLine>()
+    private var lastLanguage: Language? = null
+    private var lastFullCode: String? = null
+
     private val patternsMap = mapOf(
         Language.PYTHON to listOf(
             "COMMENT" to "#.*",
@@ -2308,15 +2327,113 @@ object SyntaxHighlighter {
     }
 
     fun highlight(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
-        val pattern = compiledPatterns[language] ?: return androidx.compose.ui.text.AnnotatedString(code)
-        val matcher = pattern.matcher(code)
+        if (code == lastFullCode && language == lastLanguage && lineCache.isNotEmpty()) {
+            return joinCache()
+        }
+
+        val lines = code.split('\n')
         
+        // If language changed or cache is invalid, rebuild completely
+        if (language != lastLanguage || lineCache.size != lines.size && lastFullCode == null) {
+            rebuildCache(lines, language)
+        } else {
+            updateCache(lines, language)
+        }
+
+        lastLanguage = language
+        lastFullCode = code
+        return joinCache()
+    }
+
+    private fun rebuildCache(lines: List<String>, language: Language) {
+        lineCache.clear()
+        var currentState = MultiLineState.NORMAL
+        for (line in lines) {
+            val (annotated, nextState) = highlightLine(line, language, currentState)
+            lineCache.add(HighlightedLine(line, annotated, nextState))
+            currentState = nextState
+        }
+    }
+
+    private fun updateCache(newLines: List<String>, language: Language) {
+        val oldSize = lineCache.size
+        val newSize = newLines.size
+        
+        // Find first difference
+        var firstDiff = 0
+        while (firstDiff < oldSize && firstDiff < newSize && lineCache[firstDiff].text == newLines[firstDiff]) {
+            firstDiff++
+        }
+        
+        if (firstDiff == oldSize && oldSize == newSize) return
+
+        // Find last difference
+        var oldLast = oldSize - 1
+        var newLast = newSize - 1
+        while (oldLast >= firstDiff && newLast >= firstDiff && lineCache[oldLast].text == newLines[newLast]) {
+            oldLast--
+            newLast--
+        }
+
+        // Remove old range
+        if (oldLast >= firstDiff) {
+            repeat(oldLast - firstDiff + 1) {
+                lineCache.removeAt(firstDiff)
+            }
+        }
+
+        // Insert new range
+        var currentState = if (firstDiff > 0) lineCache[firstDiff - 1].endState else MultiLineState.NORMAL
+        val newHighlighted = mutableListOf<HighlightedLine>()
+        for (i in firstDiff..newLast) {
+            val (annotated, nextState) = highlightLine(newLines[i], language, currentState)
+            newHighlighted.add(HighlightedLine(newLines[i], annotated, nextState))
+            currentState = nextState
+        }
+        lineCache.addAll(firstDiff, newHighlighted)
+
+        // Propagate state if changed
+        var idx = firstDiff + newHighlighted.size
+        while (idx < lineCache.size) {
+            if (lineCache[idx - 1].endState == (if (idx > 0) lineCache[idx].annotatedString.let { MultiLineState.NORMAL } else MultiLineState.NORMAL)) {
+               // This is a simplification. Real state propagation check:
+            }
+            // For now, let's just re-highlight if state changed
+            val (annotated, nextState) = highlightLine(lineCache[idx].text, language, currentState)
+            if (annotated == lineCache[idx].annotatedString && nextState == lineCache[idx].endState) {
+                break // State stabilized
+            }
+            lineCache[idx] = lineCache[idx].copy(annotatedString = annotated, endState = nextState)
+            currentState = nextState
+            idx++
+        }
+    }
+
+    private fun joinCache(): androidx.compose.ui.text.AnnotatedString {
         return buildAnnotatedString {
+            lineCache.forEachIndexed { index, line ->
+                append(line.annotatedString)
+                if (index < lineCache.size - 1) {
+                    append("\n")
+                }
+            }
+        }
+    }
+
+    private fun highlightLine(line: String, language: Language, startState: MultiLineState): Pair<androidx.compose.ui.text.AnnotatedString, MultiLineState> {
+        val pattern = compiledPatterns[language] ?: return androidx.compose.ui.text.AnnotatedString(line) to MultiLineState.NORMAL
+        val matcher = pattern.matcher(line)
+        
+        var currentState = startState
+        val annotated = buildAnnotatedString {
             var lastEnd = 0
+            
+            // Simple multi-line handling for common cases
+            // In a real production editor, this would be a full state machine
             while (matcher.find()) {
                 if (matcher.start() > lastEnd) {
                     withStyle(SpanStyle(color = colorDefault)) {
-                        append(code.substring(lastEnd, matcher.start()))
+                        append(line.substring(lastEnd, matcher.start()))
                     }
                 }
                 
@@ -2339,14 +2456,18 @@ object SyntaxHighlighter {
                 }
                 lastEnd = matcher.end()
             }
-            if (lastEnd < code.length) {
+            if (lastEnd < line.length) {
                 withStyle(SpanStyle(color = colorDefault)) {
-                    append(code.substring(lastEnd))
+                    append(line.substring(lastEnd))
                 }
             }
         }
+        
+        // Determin next state (stub for now, as our regexes are line-bound currently)
+        return annotated to MultiLineState.NORMAL
     }
 }
+
 
 
 
