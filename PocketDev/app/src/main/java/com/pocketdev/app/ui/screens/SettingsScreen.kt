@@ -201,7 +201,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         value = modelText,
                         onValueChange = onModelTextChange,
                         label = { Text("Model Name") },
-                        placeholder = { Text("e.g. moonshotai/kimi-k2-instruct-0905") },
+                        placeholder = { Text("e.g. llama-3.3-70b-versatile") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {

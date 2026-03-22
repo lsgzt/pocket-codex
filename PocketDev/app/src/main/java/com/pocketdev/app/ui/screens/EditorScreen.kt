@@ -1235,7 +1235,7 @@ fun CodeEditor(
             val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
             val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
 
-            builder.append(textFieldValue.text.substring(0, deleteStart))
+            builder.append(highlightedCode.subSequence(0, deleteStart))
 
             if (deleteEnd > deleteStart) {
                 builder.withStyle(
@@ -1245,7 +1245,7 @@ fun CodeEditor(
                         textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
                     )
                 ) {
-                    append(textFieldValue.text.substring(deleteStart, deleteEnd))
+                    builder.append(highlightedCode.subSequence(deleteStart, deleteEnd))
                 }
             }
 
@@ -1258,7 +1258,7 @@ fun CodeEditor(
                 append(inlineDiffSuggestion.addText)
             }
 
-            builder.append(textFieldValue.text.substring(deleteEnd))
+            builder.append(highlightedCode.subSequence(deleteEnd, highlightedCode.length))
             builder.toAnnotatedString()
         }
         
@@ -1520,7 +1520,7 @@ fun CodeEditor(
                         Box {
                             // Syntax highlighted overlay
                             Text(
-                                text = highlightedCode,
+                                text = displayCode,
                                 style = codeTextStyle
                             )
                             innerTextField()
@@ -2291,7 +2291,7 @@ class SyntaxHighlighterState {
         
         for (token in tokenCache) {
             when {
-                token.end <= changeStart -> {
+                token.end < changeStart -> {
                     // Token is completely before the change - keep as-is
                     beforeTokens.add(token)
                 }
