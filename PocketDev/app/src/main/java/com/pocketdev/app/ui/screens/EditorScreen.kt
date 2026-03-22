@@ -2215,16 +2215,32 @@ fun HtmlPreviewDialog(
 }
 
 /**
- * Stateful highlighter that maintains a line cache for incremental updates.
- * Only re-highlights lines that have changed, significantly improving performance.
+ * Represents a single syntax token with its position, text, and style type.
+ * Used for incremental highlighting - only changed tokens are re-processed.
+ */
+internal data class SyntaxToken(
+    val start: Int,
+    val end: Int,
+    val text: String,
+    val type: String // KEYWORD, STRING, COMMENT, NUMBER, FUNCTION, TYPE, etc.
+)
+
+/**
+ * Stateful highlighter that maintains a TOKEN cache for truly incremental updates.
+ * Only re-highlights tokens that intersect with the changed region.
+ * This is much more efficient than line-level caching.
  */
 class SyntaxHighlighterState {
-    private val lineCache = mutableStateListOf<HighlightedLine>()
+    // Token cache - stores all highlighted tokens
+    private var tokenCache: MutableList<SyntaxToken> = mutableListOf()
+    
     var currentLanguage: Language? = null
         set(value) {
             if (field != value) {
                 // Language changed, clear cache
-                lineCache.clear()
+                tokenCache.clear()
+                cachedCode = ""
+                cachedResult = null
             }
             field = value
         }
@@ -2233,125 +2249,153 @@ class SyntaxHighlighterState {
     private var cachedResult: androidx.compose.ui.text.AnnotatedString? = null
     
     /**
-     * Incrementally highlights only changed lines.
-     * Uses a line-by-line cache to avoid re-highlighting unchanged content.
+     * Truly incremental highlighting - only processes tokens in changed region.
+     * This is the key optimization: we find the exact diff range and only
+     * re-highlight tokens that intersect with that range.
      */
     fun highlightIncremental(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
-        // Check if we can use cached result
+        // Check if we can use cached result (exact same code)
         if (code == cachedCode && cachedResult != null && currentLanguage == language) {
             return cachedResult!!
         }
         
-        val newLines = code.split('\n')
-        val oldLines = if (lineCache.isNotEmpty()) lineCache.map { it.text } else emptyList()
-        
-        // Find the range of changed lines
-        val (changeStart, changeEnd) = findChangedRange(oldLines, newLines)
-        
-        // If only a small portion changed, do incremental update
-        if (changeStart < newLines.size && lineCache.isNotEmpty() && oldLines.size == newLines.size) {
-            // Incremental update: only re-highlight changed lines
-            var currentState = if (changeStart > 0) lineCache[changeStart - 1].endState else MultiLineState.NORMAL
-            
-            for (i in changeStart..changeEnd.coerceAtMost(newLines.size - 1)) {
-                val (annotated, nextState) = SyntaxHighlighter.highlightLine(newLines[i], language, currentState)
-                if (i < lineCache.size) {
-                    lineCache[i] = HighlightedLine(newLines[i], annotated, nextState)
-                } else {
-                    lineCache.add(HighlightedLine(newLines[i], annotated, nextState))
-                }
-                currentState = nextState
-            }
-            
-            // Check if state propagation is needed (e.g., for multi-line comments)
-            propagateStateChanges(changeEnd + 1, language)
-        } else {
-            // Full rebuild needed (size changed or first run)
-            rebuildCache(newLines, language)
+        // First time or language change - do full highlight
+        if (cachedCode.isEmpty() || currentLanguage != language) {
+            currentLanguage = language
+            tokenCache = SyntaxHighlighter.tokenizeAll(code, language).toMutableList()
+            cachedCode = code
+            cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
+            return cachedResult!!
         }
         
+        // Find the exact change region
+        val (changeStart, changeEnd) = findChangeRegion(cachedCode, code)
+        
+        // If no actual change (shouldn't happen but safety check)
+        if (changeStart == -1) {
+            return cachedResult!!
+        }
+        
+        // Find tokens that intersect with the change region
+        val (tokensBefore, tokensAfter, affectedTokens) = partitionTokensByChange(tokenCache, changeStart, changeEnd, cachedCode, code)
+        
+        // Calculate the text region to re-tokenize (expand to include full tokens)
+        val retokenizeStart = if (tokensBefore.isEmpty()) 0 else tokensBefore.last().end
+        val retokenizeEnd = if (tokensAfter.isEmpty()) code.length else tokensAfter.first().start
+        
+        // Re-tokenize only the affected region
+        val regionText = code.substring(retokenizeStart, retokenizeEnd.coerceAtMost(code.length))
+        val newTokens = SyntaxHighlighter.tokenizeRegion(regionText, language, retokenizeStart)
+        
+        // Update the token cache
+        tokenCache = (tokensBefore + newTokens + tokensAfter).toMutableList()
+        
         cachedCode = code
-        cachedResult = joinCache()
+        cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
         return cachedResult!!
     }
     
-    private fun findChangedRange(oldLines: List<String>, newLines: List<String>): Pair<Int, Int> {
-        if (oldLines.isEmpty()) return 0 to newLines.size - 1
-        
+    /**
+     * Finds the exact character range that changed between old and new code.
+     */
+    private fun findChangeRegion(oldCode: String, newCode: String): Pair<Int, Int> {
+        // Find start of change
         var start = 0
-        while (start < oldLines.size && start < newLines.size && oldLines[start] == newLines[start]) {
+        val minLen = minOf(oldCode.length, newCode.length)
+        while (start < minLen && oldCode[start] == newCode[start]) {
             start++
         }
         
-        if (start == oldLines.size && start == newLines.size) {
-            // No changes
+        // No change
+        if (start == minLen && oldCode.length == newCode.length) {
             return -1 to -1
         }
         
-        var end = newLines.size - 1
-        var oldEnd = oldLines.size - 1
-        while (oldEnd >= start && end >= start && oldLines[oldEnd] == newLines[end]) {
+        // Find end of change (from the end)
+        var oldEnd = oldCode.length - 1
+        var newEnd = newCode.length - 1
+        while (oldEnd >= start && newEnd >= start && oldCode[oldEnd] == newCode[newEnd]) {
             oldEnd--
-            end--
+            newEnd--
         }
         
-        return start to end
+        // Return the range in NEW code that changed
+        return start to (newEnd + 1)
     }
     
-    private fun rebuildCache(lines: List<String>, language: Language) {
-        lineCache.clear()
-        var currentState = MultiLineState.NORMAL
-        for (line in lines) {
-            val (annotated, nextState) = SyntaxHighlighter.highlightLine(line, language, currentState)
-            lineCache.add(HighlightedLine(line, annotated, nextState))
-            currentState = nextState
-        }
-    }
-    
-    private fun propagateStateChanges(fromIndex: Int, language: Language) {
-        if (fromIndex <= 0 || fromIndex >= lineCache.size) return
+    /**
+     * Partitions tokens into three groups: before change, after change, and affected.
+     */
+    private fun partitionTokensByChange(
+        tokens: List<SyntaxToken>,
+        changeStart: Int,
+        changeEnd: Int,
+        oldCode: String,
+        newCode: String
+    ): Triple<List<SyntaxToken>, List<SyntaxToken>, List<SyntaxToken>> {
+        // Calculate the length delta
+        val lengthDelta = newCode.length - oldCode.length
         
-        var currentState = lineCache[fromIndex - 1].endState
-        for (i in fromIndex until lineCache.size) {
-            val cached = lineCache[i]
-            // Quick check: if the cached end state matches current state, no need to re-highlight
-            // But we still need to verify the highlighting is correct
-            val (annotated, nextState) = SyntaxHighlighter.highlightLine(cached.text, language, currentState)
+        // Find tokens completely before the change region
+        val beforeTokens = tokens.takeWhile { it.end <= changeStart }
+        
+        // Find tokens completely after the change region (need to adjust positions)
+        val afterTokens = tokens.dropWhile { it.end <= changeStart }
+            .dropWhile { it.start < changeEnd - lengthDelta } // Skip affected tokens
+            .map { token ->
+                // Adjust token positions for the length change
+                token.copy(
+                    start = token.start + lengthDelta,
+                    end = token.end + lengthDelta
+                )
+            }
+        
+        // Affected tokens are those in between (will be replaced)
+        val affectedStart = beforeTokens.size
+        val affectedEnd = tokens.size - afterTokens.size
+        
+        return Triple(beforeTokens, afterTokens, tokens.subList(affectedStart, affectedEnd))
+    }
+    
+    /**
+     * Builds an AnnotatedString from tokens efficiently.
+     */
+    private fun buildAnnotatedStringFromTokens(code: String, tokens: List<SyntaxToken>): androidx.compose.ui.text.AnnotatedString {
+        return buildAnnotatedString {
+            var lastEnd = 0
             
-            if (annotated == cached.annotatedString && nextState == cached.endState) {
-                // State stabilized, no more propagation needed
-                break
+            for (token in tokens) {
+                // Add unstyled text before this token
+                if (token.start > lastEnd) {
+                    withStyle(SpanStyle(color = SyntaxHighlighter.colorDefault)) {
+                        append(code.substring(lastEnd, token.start))
+                    }
+                }
+                
+                // Add the styled token
+                val color = SyntaxHighlighter.colorMap[token.type] ?: SyntaxHighlighter.colorDefault
+                withStyle(SpanStyle(color = color)) {
+                    append(token.text)
+                }
+                
+                lastEnd = token.end
             }
             
-            lineCache[i] = HighlightedLine(cached.text, annotated, nextState)
-            currentState = nextState
-        }
-    }
-    
-    private fun joinCache(): androidx.compose.ui.text.AnnotatedString {
-        return buildAnnotatedString {
-            lineCache.forEachIndexed { index, line ->
-                append(line.annotatedString)
-                if (index < lineCache.size - 1) {
-                    append("\n")
+            // Add any remaining unstyled text
+            if (lastEnd < code.length) {
+                withStyle(SpanStyle(color = SyntaxHighlighter.colorDefault)) {
+                    append(code.substring(lastEnd))
                 }
             }
         }
     }
     
     fun clear() {
-        lineCache.clear()
+        tokenCache.clear()
         cachedCode = ""
         cachedResult = null
     }
 }
-
-// Data class for cached highlighted lines
-internal data class HighlightedLine(
-    val text: String,
-    val annotatedString: androidx.compose.ui.text.AnnotatedString,
-    val endState: MultiLineState
-)
 
 // Multi-line state tracking (internal for use by SyntaxHighlighter)
 internal enum class MultiLineState {
@@ -2371,7 +2415,7 @@ object SyntaxHighlighter {
     private val colorOperator = Color(0xFFD4D4D4)
     private val colorTag = Color(0xFF569CD6)
     private val colorAttr = Color(0xFF9CDCFE)
-    private val colorDefault = Color(0xFFCDD9E5)
+    internal val colorDefault = Color(0xFFCDD9E5)  // Made internal for SyntaxHighlighterState
     private val colorPreprocessor = Color(0xFFC586C0)
 
     // Pre-compiled patterns for each language - created once and reused
@@ -2448,7 +2492,8 @@ object SyntaxHighlighter {
         )
     )
 
-    private val colorMap = mapOf(
+    // Made internal for SyntaxHighlighterState to access
+    internal val colorMap = mapOf(
         "KEYWORD" to colorKeyword,
         "STRING" to colorString,
         "COMMENT" to colorComment,
@@ -2472,6 +2517,76 @@ object SyntaxHighlighter {
         }
     }
 
+    /**
+     * Tokenizes all code - used for initial highlighting or full refresh.
+     * Returns a list of SyntaxToken objects representing all highlighted tokens.
+     */
+    internal fun tokenizeAll(code: String, language: Language): List<SyntaxToken> {
+        val pattern = getPattern(language)
+        val matcher = pattern.matcher(code)
+        val tokens = mutableListOf<SyntaxToken>()
+        
+        while (matcher.find()) {
+            // Find which group matched
+            var matchedType: String? = null
+            for ((name, _) in colorMap) {
+                try {
+                    val groupText = matcher.group(name)
+                    if (groupText != null) {
+                        matchedType = name
+                        break
+                    }
+                } catch (_: Exception) {}
+            }
+            
+            matchedType?.let { type ->
+                tokens.add(SyntaxToken(
+                    start = matcher.start(),
+                    end = matcher.end(),
+                    text = matcher.group(),
+                    type = type
+                ))
+            }
+        }
+        
+        return tokens
+    }
+    
+    /**
+     * Tokenizes a specific region of code - used for incremental highlighting.
+     * Only processes tokens within the given region, adjusting positions with offset.
+     */
+    internal fun tokenizeRegion(code: String, language: Language, offset: Int = 0): List<SyntaxToken> {
+        val pattern = getPattern(language)
+        val matcher = pattern.matcher(code)
+        val tokens = mutableListOf<SyntaxToken>()
+        
+        while (matcher.find()) {
+            // Find which group matched
+            var matchedType: String? = null
+            for ((name, _) in colorMap) {
+                try {
+                    val groupText = matcher.group(name)
+                    if (groupText != null) {
+                        matchedType = name
+                        break
+                    }
+                } catch (_: Exception) {}
+            }
+            
+            matchedType?.let { type ->
+                tokens.add(SyntaxToken(
+                    start = matcher.start() + offset,
+                    end = matcher.end() + offset,
+                    text = matcher.group(),
+                    type = type
+                ))
+            }
+        }
+        
+        return tokens
+    }
+    
     /**
      * Highlights a single line. Used by SyntaxHighlighterState for incremental updates.
      * Internal visibility to avoid exposing MultiLineState.
