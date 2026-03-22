@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -34,6 +35,7 @@ import com.pocketdev.app.editor.AutocompleteEngine
 import com.pocketdev.app.editor.AutocompleteItem
 import com.pocketdev.app.viewmodels.EditorViewModel
 import com.pocketdev.app.viewmodels.SettingsViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.pocketdev.app.ui.components.MarkdownText
 import com.pocketdev.app.ui.components.DiffViewer
@@ -187,6 +189,7 @@ fun EditorScreen(
 
     Scaffold(
         modifier = Modifier.imePadding(),
+        contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -809,6 +812,9 @@ fun CodeEditor(
     var highlightedCode by remember { mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text)) }
 
     LaunchedEffect(textFieldValue.text, language, ghostSuggestion, inlineDiffSuggestion, textFieldValue.selection) {
+        if (ghostSuggestion == null && inlineDiffSuggestion == null) {
+            delay(120L)
+        }
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             val newHighlight = SyntaxHighlighter.highlight(textFieldValue.text, language)
             
@@ -1009,6 +1015,7 @@ fun CodeEditor(
                         }
                     },
                     modifier = Modifier
+                        .graphicsLayer { }
                         .fillMaxWidth()
                         .padding(8.dp)
                         .pointerInput(ghostSuggestion, inlineDiffSuggestion) {
@@ -1840,11 +1847,13 @@ object SyntaxHighlighter {
 fun SpecialCharactersBar(
     onCharacterClick: (String) -> Unit
 ) {
-    val specialChars = listOf(
+    val specialChars = remember {
+        listOf(
         "(", ")", "{", "}", "[", "]", "<", ">", "=", "+", "-", "*", "/",
         ".", ":", ";", "\"", "'", "!", "?", "@", "#", "$", "%", "&", "_",
         "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "=>", "::"
-    )
+        )
+    }
     
     Column(
         modifier = Modifier

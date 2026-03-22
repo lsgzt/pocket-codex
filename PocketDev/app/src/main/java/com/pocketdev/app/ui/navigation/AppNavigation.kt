@@ -43,6 +43,7 @@ fun AppNavigation() {
     val currentRoute = navBackStackEntry?.destination?.route
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         bottomBar = {
             NavigationBar {
                 navItems.forEach { item ->
