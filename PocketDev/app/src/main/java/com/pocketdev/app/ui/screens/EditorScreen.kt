@@ -1199,36 +1199,15 @@ fun CodeEditor(
     }
 
     // Use a stable highlighter state that persists across recompositions
-    // This maintains the token cache for incremental updates
     val highlighterState = remember { SyntaxHighlighterState() }
     
-    // PERSISTENT highlighted code - initialized with current text, NOT empty
-    // The key is using remember WITHOUT textFieldValue.text as a key
-    // This prevents the "flash" by keeping the previous highlighting visible
-    // while the LaunchedEffect updates it incrementally
-    var highlightedCode by remember { 
-        mutableStateOf(
-            try {
-                highlighterState.highlightIncremental(textFieldValue.text, language)
-            } catch (e: Exception) {
-                androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
-            }
-        )
-    }
-    
-    // Track last highlighted text hash to avoid redundant work
-    var lastTextHash by remember { mutableStateOf(0) }
-    
-    // Update highlighting incrementally via LaunchedEffect
-    // This runs AFTER the UI renders, so the previous highlighting stays visible
-    // until the new highlighting is ready - NO FLASH!
-    LaunchedEffect(textFieldValue.text, language) {
-        val hash = textFieldValue.text.hashCode()
-        if (hash != lastTextHash || highlighterState.currentLanguage != language) {
-            lastTextHash = hash
-            // The incremental highlighter uses cached tokens, so this is FAST
-            highlightedCode = highlighterState.highlightIncremental(textFieldValue.text, language)
-        }
+    // SYNCHRONOUS highlighting - computed during composition, not in LaunchedEffect
+    // This prevents the flash by ensuring text and highlighting are always in sync
+    // The key is that we use a simple remember without recomputing the entire state
+    val highlightedCode = remember(textFieldValue.text, language) {
+        // This runs synchronously during composition
+        // Our incremental algorithm is fast enough to not cause frame drops
+        highlighterState.highlightIncremental(textFieldValue.text, language)
     }
     
     // Apply ghost suggestions or inline diffs on top of highlighted code
@@ -1287,11 +1266,16 @@ fun CodeEditor(
     }
 
 
-    val codeTextStyle = remember(fontSize) {
+    // Default text color for code - matches SyntaxHighlighter.colorDefault
+    // This ensures text is visible even if AnnotatedString has no span styles
+    val codeDefaultColor = Color(0xFFCDD9E5)
+    
+    val codeTextStyle = remember(fontSize, codeDefaultColor) {
         TextStyle(
             fontFamily = FontFamily.Monospace,
             fontSize = fontSize.sp,
-            lineHeight = (fontSize * 1.5).sp
+            lineHeight = (fontSize * 1.5).sp,
+            color = codeDefaultColor
         )
     }
     val transparentCodeTextStyle = remember(codeTextStyle) { codeTextStyle.copy(color = Color.Transparent) }
