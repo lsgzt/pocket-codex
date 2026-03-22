@@ -1202,26 +1202,32 @@ fun CodeEditor(
     // This maintains the token cache for incremental updates
     val highlighterState = remember { SyntaxHighlighterState() }
     
-    // STABLE highlighted code that persists across recompositions
-    // The key insight: we DON'T recompute on every keystroke
-    // Instead, we update the highlighted code incrementally and only when needed
-    // This prevents the "white flash" by keeping the previous highlighting visible
-    var highlightedCodeState by remember {
-        mutableStateOf(androidx.compose.ui.text.AnnotatedString(""))
+    // PERSISTENT highlighted code - initialized with current text, NOT empty
+    // The key is using remember WITHOUT textFieldValue.text as a key
+    // This prevents the "flash" by keeping the previous highlighting visible
+    // while the LaunchedEffect updates it incrementally
+    var highlightedCode by remember { 
+        mutableStateOf(
+            try {
+                highlighterState.highlightIncremental(textFieldValue.text, language)
+            } catch (e: Exception) {
+                androidx.compose.ui.text.AnnotatedString(textFieldValue.text)
+            }
+        )
     }
     
-    // Compute highlighted code SYNCHRONOUSLY using derivedStateOf
-    // This is efficient because:
-    // 1. derivedStateOf only triggers when the result actually changes
-    // 2. Our incremental highlighting preserves unchanged tokens
-    // 3. We NEVER show plain text - always start from previous highlighting
-    val highlightedCode by remember {
-        derivedStateOf {
-            val currentText = textFieldValue.text
-            val result = highlighterState.highlightIncremental(currentText, language)
-            // Update the stable state for next time
-            highlightedCodeState = result
-            result
+    // Track last highlighted text hash to avoid redundant work
+    var lastTextHash by remember { mutableStateOf(0) }
+    
+    // Update highlighting incrementally via LaunchedEffect
+    // This runs AFTER the UI renders, so the previous highlighting stays visible
+    // until the new highlighting is ready - NO FLASH!
+    LaunchedEffect(textFieldValue.text, language) {
+        val hash = textFieldValue.text.hashCode()
+        if (hash != lastTextHash || highlighterState.currentLanguage != language) {
+            lastTextHash = hash
+            // The incremental highlighter uses cached tokens, so this is FAST
+            highlightedCode = highlighterState.highlightIncremental(textFieldValue.text, language)
         }
     }
     
