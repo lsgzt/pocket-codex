@@ -524,22 +524,60 @@ private fun EditorMainContent(
 
         AnimatedVisibility(
             visible = uiState.showTerminal,
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit = slideOutVertically(targetOffsetY = { it }),
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+            ),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+            ),
             modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
         ) {
+            // NOTE: shadowElevation is intentionally NOT used here.
+            // Using shadowElevation inside AnimatedVisibility causes a "ghost black box"
+            // artifact on Android: the GPU shadow layer is painted outside the animation's
+            // clip bounds and lingers after the exit animation completes.
+            // Instead, we use a subtle top border + tonal elevation for depth.
+            val terminalShape = if (uiState.isTerminalFullScreen)
+                RoundedCornerShape(0.dp)
+            else
+                RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+
             Surface(
                 tonalElevation = 8.dp,
-                shadowElevation = 16.dp,
-                shape = if (uiState.isTerminalFullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                shadowElevation = 0.dp,
+                shape = terminalShape,
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(terminalShape)
             ) {
-                EditorTerminalSection(
-                    viewModel = viewModel,
-                    uiState = uiState,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Thin glowing top border replaces the shadow — stays inside clip bounds
+                    if (!uiState.isTerminalFullScreen) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(
+                                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                        colors = listOf(
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.0f),
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.0f),
+                                        )
+                                    )
+                                )
+                        )
+                    }
+                    EditorTerminalSection(
+                        viewModel = viewModel,
+                        uiState = uiState,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
