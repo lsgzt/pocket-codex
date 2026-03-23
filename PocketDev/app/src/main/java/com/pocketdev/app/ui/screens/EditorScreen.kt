@@ -474,13 +474,15 @@ private fun EditorMainContent(
     paddingValues: PaddingValues
 ) {
     val selectionState = rememberEditorSelectionState()
+    val tabSize by settingsViewModel.tabSize.collectAsStateWithLifecycle()
     val onAddFile = remember(uiState) { { uiState.activeDialog = EditorDialogType.ADD_FILE } }
 
-    val onCharacterClick = remember(viewModel) {
+    val onCharacterClick = remember(viewModel, tabSize) {
         { char: String ->
             val currentCode = viewModel.currentCode.value
             val cursorPos = selectionState.value.start.coerceIn(0, currentCode.length)
             val (insertText, cursorOffset) = when (char) {
+                "Tab" -> " ".repeat(tabSize) to tabSize
                 "(" -> "()" to 1
                 "{" -> "{}" to 1
                 "[" -> "[]" to 1
@@ -2798,7 +2800,7 @@ fun SpecialCharactersBar(
 ) {
     val specialChars = remember {
         listOf(
-            "(", ")", "{", "}", "[", "]", "\"", "'", "<", ">", "=", ";", ":",
+            "Tab", "(", ")", "{", "}", "[", "]", "\"", "'", "<", ">", "=", ";", ":",
             ".", ",", "+", "-", "*", "/", "!", "?", "@", "#", "$", "%", "&", "_", "|", "\\", "`",
             "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "=>", "::"
         )
