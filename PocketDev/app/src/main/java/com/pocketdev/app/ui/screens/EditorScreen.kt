@@ -2903,3 +2903,4 @@ fun SpecialCharactersBar(
             }
         }
     }
+}
