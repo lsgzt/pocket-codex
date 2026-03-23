@@ -18,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.SpanStyle
@@ -525,14 +524,19 @@ private fun EditorMainContent(
 
         AnimatedVisibility(
             visible = uiState.showTerminal,
-            enter = slideInVertically(
-                initialOffsetY = { it },
+            // expandVertically grows the container height from 0 → full, anchored at the top.
+            // This means the terminal panel grows downward into view — no empty space ever left behind.
+            enter = expandVertically(
+                expandFrom = Alignment.Top,
                 animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
-            ),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
+            ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+            // shrinkVertically collapses the container height from full → 0 toward the top.
+            // The Column reclaims the space in real-time — no black void remains.
+            // (slideOutVertically was the bug: it only translates the content, leaving a ghost space)
+            exit = shrinkVertically(
+                shrinkTowards = Alignment.Top,
                 animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-            ),
+            ) + fadeOut(animationSpec = tween(durationMillis = 180)),
             modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
         ) {
             // NOTE: shadowElevation is intentionally NOT used here.
@@ -2899,4 +2903,3 @@ fun SpecialCharactersBar(
             }
         }
     }
-}
