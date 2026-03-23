@@ -8,7 +8,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -530,7 +529,7 @@ private fun EditorMainContent(
             Surface(
                 tonalElevation = 8.dp,
                 shadowElevation = 16.dp,
-                shape = if (uiState.isTerminalFullScreen) RectangleShape else RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                shape = if (uiState.isTerminalFullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.fillMaxWidth()
             ) {
