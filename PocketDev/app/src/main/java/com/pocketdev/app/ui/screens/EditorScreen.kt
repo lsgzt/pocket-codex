@@ -1301,16 +1301,35 @@ fun CodeEditor(
         }
     }
 
-    // Use a stable highlighter state that persists across recompositions
+    // Use a stable highlighter state that persists across recompositions.
     val highlighterState = remember { SyntaxHighlighterState() }
-    
-    // SYNCHRONOUS highlighting - computed during composition, not in LaunchedEffect
-    // This prevents the flash by ensuring text and highlighting are always in sync
-    // The key is that we use a simple remember without recomputing the entire state
-    val highlightedCode = remember(textFieldValue.text, language) {
-        // This runs synchronously during composition
-        // Our incremental algorithm is fast enough to not cause frame drops
-        highlighterState.highlightIncremental(textFieldValue.text, language)
+    val isLargeFile = textFieldValue.text.length > 12_000
+    var asyncHighlightedCode by remember {
+        mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text))
+    }
+
+    // Large files are highlighted off the main thread to keep typing smooth.
+    LaunchedEffect(textFieldValue.text, language, isLargeFile) {
+        if (!isLargeFile) return@LaunchedEffect
+
+        val snapshotText = textFieldValue.text
+        val snapshotLanguage = language
+        delay(120)
+        val newHighlight = withContext(Dispatchers.Default) {
+            SyntaxHighlighter.highlight(snapshotText, snapshotLanguage)
+        }
+
+        if (snapshotText == textFieldValue.text && snapshotLanguage == language) {
+            asyncHighlightedCode = newHighlight
+        }
+    }
+
+    val highlightedCode = if (isLargeFile) {
+        asyncHighlightedCode
+    } else {
+        remember(textFieldValue.text, language) {
+            highlighterState.highlightIncremental(textFieldValue.text, language)
+        }
     }
     
     // Apply ghost suggestions or inline diffs on top of highlighted code
@@ -2444,39 +2463,28 @@ class SyntaxHighlighterState {
         if (code == cachedCode && cachedResult != null && currentLanguage == language) {
             return cachedResult!!
         }
-        
-        // Language change requires full rebuild
-        if (currentLanguage != language) {
+
+        // Language switch or first render: always do a full pass.
+        if (currentLanguage != language || cachedCode.isEmpty()) {
             currentLanguage = language
-            tokenCache = SyntaxHighlighter.tokenizeAll(code, language)
-            cachedCode = code
-            cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
-            return cachedResult!!
+            return rebuildFullHighlight(code, language)
         }
-        
-        // First time - do full highlight
-        if (cachedCode.isEmpty()) {
-            tokenCache = SyntaxHighlighter.tokenizeAll(code, language)
-            cachedCode = code
-            cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
-            return cachedResult!!
-        }
-        
+
         // INCREMENTAL UPDATE
         val lengthDelta = code.length - cachedCode.length
-        
+
         // Find change boundaries
         var changeStart = 0
         val minLen = minOf(cachedCode.length, code.length)
         while (changeStart < minLen && cachedCode[changeStart] == code[changeStart]) {
             changeStart++
         }
-        
+
         // No actual change (shouldn't reach here but safety check)
         if (changeStart == minLen && cachedCode.length == code.length) {
             return cachedResult!!
         }
-        
+
         // Find change end from the back
         var oldEnd = cachedCode.length - 1
         var newEnd = code.length - 1
@@ -2485,15 +2493,21 @@ class SyntaxHighlighterState {
             newEnd--
         }
         val changeEnd = newEnd + 1
-        
+
+        // Large edits (for example loading a long file) are safer as a full rebuild.
+        val changedSpan = (changeEnd - changeStart) + kotlin.math.abs(lengthDelta)
+        if (changedSpan > 8000 || (changeStart == 0 && kotlin.math.abs(lengthDelta) > 1000)) {
+            return rebuildFullHighlight(code, language)
+        }
+
         // Partition tokens:
         // - beforeTokens: tokens that END before changeStart (unchanged)
         // - afterTokens: tokens that START after oldEnd+1 (just need position adjustment)
         // - affected: tokens in between (need re-tokenizing)
-        
+
         val beforeTokens = mutableListOf<SyntaxToken>()
         val afterTokens = mutableListOf<SyntaxToken>()
-        
+
         for (token in tokenCache) {
             when {
                 token.end < changeStart -> {
@@ -2511,25 +2525,40 @@ class SyntaxHighlighterState {
                 // (implicitly skipped, will be part of newTokens)
             }
         }
-        
+
         // Calculate region to re-tokenize
         // Start: end of last beforeToken, or 0 if none
         // End: start of first afterToken (in new coordinates), or code.length if none
         val retokenizeStart = beforeTokens.lastOrNull()?.end ?: 0
         val retokenizeEnd = afterTokens.firstOrNull()?.start ?: code.length
-        
+
         // Re-tokenize the affected region
         val regionText = code.substring(retokenizeStart, retokenizeEnd.coerceAtMost(code.length))
         val newTokens = SyntaxHighlighter.tokenizeRegion(regionText, language, retokenizeStart)
-        
+
         // Update cache
         tokenCache = beforeTokens + newTokens + afterTokens
+
+        // Guard against any out-of-range/overlap anomalies from incremental merge.
+        val invalidCache = tokenCache.any { it.start < 0 || it.end < it.start || it.end > code.length } ||
+                tokenCache.zipWithNext().any { (a, b) -> b.start < a.end }
+        if (invalidCache) {
+            return rebuildFullHighlight(code, language)
+        }
+
         cachedCode = code
         cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
-        
+
         return cachedResult!!
     }
-    
+
+    private fun rebuildFullHighlight(code: String, language: Language): androidx.compose.ui.text.AnnotatedString {
+        tokenCache = SyntaxHighlighter.tokenizeAll(code, language)
+        cachedCode = code
+        cachedResult = buildAnnotatedStringFromTokens(code, tokenCache)
+        return cachedResult!!
+    }
+
     private fun buildAnnotatedStringFromTokens(code: String, tokens: List<SyntaxToken>): androidx.compose.ui.text.AnnotatedString {
         return buildAnnotatedString {
             var lastEnd = 0

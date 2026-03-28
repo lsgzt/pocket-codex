@@ -25,7 +25,7 @@ object AutocompleteEngine {
         if (prefix.length < 2) return emptyList()
 
         val staticCompletions = getCompletionsForLanguage(language)
-        val userIdentifiers = extractUserDefinedIdentifiers(code, language)
+        val userIdentifiers = extractUserDefinedIdentifiers(code, cursorPosition, language)
         val staticNames = staticCompletions.map { it.text }.toHashSet()
         val uniqueUserIdentifiers = userIdentifiers.filter { it.text !in staticNames }
 
@@ -67,8 +67,13 @@ object AutocompleteEngine {
         Regex("""(?:let|var|const|def|val)\s+([a-zA-Z_]\w*)""")
     )
 
-    private fun extractUserDefinedIdentifiers(code: String, language: Language): List<AutocompleteItem> {
-        val scannable = if (code.length > 8000) code.substring(0, 8000) else code
+    private fun extractUserDefinedIdentifiers(code: String, cursorPosition: Int, language: Language): List<AutocompleteItem> {
+        val safeCursor = cursorPosition.coerceIn(0, code.length)
+        val headSize = 2000
+        val tailSize = 8000
+        val headSegment = if (safeCursor > headSize) code.substring(0, headSize) else ""
+        val tailStart = (safeCursor - tailSize).coerceAtLeast(0)
+        val tailSegment = code.substring(tailStart, safeCursor)
         val found = mutableSetOf<String>()
         val patterns = when (language) {
             Language.PYTHON -> pythonIdentifierPatterns
@@ -78,7 +83,13 @@ object AutocompleteEngine {
             else -> fallbackIdentifierPatterns
         }
         for (pattern in patterns) {
-            pattern.findAll(scannable).forEach { match ->
+            if (headSegment.isNotEmpty()) {
+                pattern.findAll(headSegment).forEach { match ->
+                    val name = match.groupValues[1]
+                    if (name.length >= 2) found.add(name)
+                }
+            }
+            pattern.findAll(tailSegment).forEach { match ->
                 val name = match.groupValues[1]
                 if (name.length >= 2) found.add(name)
             }
