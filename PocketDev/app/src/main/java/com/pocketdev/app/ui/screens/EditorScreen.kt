@@ -1507,7 +1507,7 @@ fun CodeEditor(
                     .weight(1f)
                     .fillMaxHeight()
                     .let {
-                        if (!wordWrap || isLargeFile) it.horizontalScroll(horizontalScrollState) else it
+                        if (!wordWrap) it.horizontalScroll(horizontalScrollState) else it
                     }
             ) {
                 BasicTextField(
@@ -1755,7 +1755,7 @@ fun CodeEditor(
             val xOffset = with(density) { 
                 val baseLeft = if (lineNumbers) lineNumberWidth.toPx() else 0f
                 val paddingLeft = 8.dp.toPx()
-                val scrollX = if (!wordWrap || isLargeFile) horizontalScrollState.value.toFloat() else 0f
+                val scrollX = if (!wordWrap) horizontalScrollState.value.toFloat() else 0f
                 (baseLeft + paddingLeft + cursorRect.left - scrollX).toInt() 
             }
             val yOffset = with(density) { 
