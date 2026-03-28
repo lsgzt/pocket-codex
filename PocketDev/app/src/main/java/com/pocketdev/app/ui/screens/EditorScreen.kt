@@ -1307,6 +1307,7 @@ fun CodeEditor(
     var asyncHighlightedCode by remember {
         mutableStateOf(androidx.compose.ui.text.AnnotatedString(textFieldValue.text))
     }
+    var asyncHighlightedSource by remember { mutableStateOf(textFieldValue.text) }
 
     // Large files are highlighted off the main thread to keep typing smooth.
     LaunchedEffect(textFieldValue.text, language, isLargeFile) {
@@ -1321,6 +1322,7 @@ fun CodeEditor(
 
         if (snapshotText == textFieldValue.text && snapshotLanguage == language) {
             asyncHighlightedCode = newHighlight
+            asyncHighlightedSource = snapshotText
         }
     }
 
@@ -1463,14 +1465,15 @@ fun CodeEditor(
         ) {
             // Line numbers — same font size and line height as code, shared scroll
             if (lineNumbers) {
-                val (visualCount, lineMapping) = if (wordWrap) {
+                val useWrappedLineNumbers = wordWrap && !isLargeFile
+                val (visualCount, lineMapping) = if (useWrappedLineNumbers) {
                     visualLineInfo
                 } else {
                     logicalLineCount to emptyMap<Int, Int>()
                 }
 
-                val lineNumbersText = remember(wordWrap, lineMapping, visualCount, logicalLineCount) {
-                    if (wordWrap && lineMapping.isNotEmpty()) {
+                val lineNumbersText = remember(useWrappedLineNumbers, lineMapping, visualCount, logicalLineCount) {
+                    if (useWrappedLineNumbers && lineMapping.isNotEmpty()) {
                         (0 until visualCount).map { visualLine ->
                             lineMapping[visualLine] ?: (visualLine + 1)
                         }.joinToString("\n")
@@ -1479,6 +1482,7 @@ fun CodeEditor(
                     }
                 }
 
+                val suppressLineNumberText = isLargeFile && verticalScrollState.isScrollInProgress
                 Column(
                     modifier = Modifier
                         .width(lineNumberWidth)
@@ -1487,11 +1491,13 @@ fun CodeEditor(
                         .padding(start = 2.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.End
                 ) {
-                    Text(
-                        text = lineNumbersText,
-                        style = lineNumberTextStyle,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.End
-                    )
+                    if (!suppressLineNumberText) {
+                        Text(
+                            text = lineNumbersText,
+                            style = lineNumberTextStyle,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
+                        )
+                    }
                 }
             }
 
@@ -1501,7 +1507,7 @@ fun CodeEditor(
                     .weight(1f)
                     .fillMaxHeight()
                     .let {
-                        if (!wordWrap) it.horizontalScroll(horizontalScrollState) else it
+                        if (!wordWrap || isLargeFile) it.horizontalScroll(horizontalScrollState) else it
                     }
             ) {
                 BasicTextField(
@@ -1587,7 +1593,7 @@ fun CodeEditor(
                         }
 
                         // Calculate visual line info for word wrap mode
-                        if (wordWrap) {
+                        if (wordWrap && lineNumbers && !isLargeFile) {
                             val lineCount = layoutResult.lineCount
                             val mapping = mutableMapOf<Int, Int>()
                             val text = textFieldValue.text
@@ -1719,11 +1725,23 @@ fun CodeEditor(
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerTextField ->
                         Box {
-                            // Syntax highlighted overlay
-                            Text(
-                                text = displayCode,
-                                style = codeTextStyle
+                            val usePlainOverlay = isLargeFile && (
+                                verticalScrollState.isScrollInProgress ||
+                                        horizontalScrollState.isScrollInProgress ||
+                                        asyncHighlightedSource != textFieldValue.text
                             )
+                            // Skip heavy span rendering while scrolling huge files.
+                            if (usePlainOverlay) {
+                                Text(
+                                    text = textFieldValue.text,
+                                    style = codeTextStyle
+                                )
+                            } else {
+                                Text(
+                                    text = displayCode,
+                                    style = codeTextStyle
+                                )
+                            }
                             innerTextField()
                         }
                     }
@@ -1737,7 +1755,7 @@ fun CodeEditor(
             val xOffset = with(density) { 
                 val baseLeft = if (lineNumbers) lineNumberWidth.toPx() else 0f
                 val paddingLeft = 8.dp.toPx()
-                val scrollX = if (!wordWrap) horizontalScrollState.value.toFloat() else 0f
+                val scrollX = if (!wordWrap || isLargeFile) horizontalScrollState.value.toFloat() else 0f
                 (baseLeft + paddingLeft + cursorRect.left - scrollX).toInt() 
             }
             val yOffset = with(density) { 
