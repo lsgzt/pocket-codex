@@ -179,28 +179,42 @@ class JavaScriptEngine {
 
             val scope = cx.initStandardObjects()
 
-            // Define prompt() that blocks on TerminalManager input
-            // We inject a Java object as a bridge
-            val inputBridge = object : ScriptableObject() {
-                override fun getClassName() = "InputBridge"
-
-                fun requestInput(promptMsg: String?): String {
-                    return terminalManager.requestInput(promptMsg ?: "")
+            // Bridge JS prompt()/console output to TerminalManager callbacks.
+            val requestInputObj = object : org.mozilla.javascript.BaseFunction() {
+                override fun call(
+                    cx: Context?,
+                    scope: org.mozilla.javascript.Scriptable?,
+                    thisObj: org.mozilla.javascript.Scriptable?,
+                    args: Array<out Any?>?
+                ): Any? {
+                    val promptMsg = args?.firstOrNull()?.toString() ?: ""
+                    return terminalManager.requestInput(promptMsg)
                 }
             }
-            ScriptableObject.putProperty(scope, "_inputBridge", inputBridge)
+            ScriptableObject.putProperty(scope, "_requestInput", requestInputObj)
+
+            val outputCallbackObj = object : org.mozilla.javascript.BaseFunction() {
+                override fun call(
+                    cx: Context?,
+                    scope: org.mozilla.javascript.Scriptable?,
+                    thisObj: org.mozilla.javascript.Scriptable?,
+                    args: Array<out Any?>?
+                ): Any? {
+                    val text = args?.firstOrNull()?.toString() ?: ""
+                    if (text.isNotEmpty()) {
+                        terminalManager.appendOutput(text.trimEnd('\n'))
+                    }
+                    return org.mozilla.javascript.Undefined.instance
+                }
+            }
+            ScriptableObject.putProperty(scope, "_outputCallback", outputCallbackObj)
 
             val consoleScript = """
                 function prompt(message) {
-                    if (message) { java.lang.System.out.print(""); _outputCallback(String(message)); }
-                    return String(_inputBridge.requestInput(message || ""));
+                    var promptText = message ? String(message) : "";
+                    return String(_requestInput(promptText));
                 }
-                
-                var _outputParts = [];
-                function _outputCallback(text) {
-                    _outputParts.push(text);
-                }
-                
+
                 var console = {
                     _output: [],
                     log: function() {
@@ -242,23 +256,6 @@ class JavaScriptEngine {
                     }
                 };
             """.trimIndent()
-
-            // We need a real output callback for streaming
-            val outputCallbackObj = object : org.mozilla.javascript.BaseFunction() {
-                override fun call(
-                    cx: Context?,
-                    scope: org.mozilla.javascript.Scriptable?,
-                    thisObj: org.mozilla.javascript.Scriptable?,
-                    args: Array<out Any?>?
-                ): Any? {
-                    val text = args?.firstOrNull()?.toString() ?: ""
-                    if (text.isNotEmpty()) {
-                        terminalManager.appendOutput(text.trimEnd('\n'))
-                    }
-                    return org.mozilla.javascript.Undefined.instance
-                }
-            }
-            ScriptableObject.putProperty(scope, "_outputCallback", outputCallbackObj)
 
             cx.evaluateString(scope, consoleScript, "console_setup", 1, null)
 

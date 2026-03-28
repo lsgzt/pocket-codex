@@ -185,7 +185,11 @@ fun AppNavigation() {
                         editorViewModel.newFile(example.language)
                         editorViewModel.updateCode(example.code)
                         navController.navigate(BottomNavItem.Editor.route) {
-                            popUpTo(BottomNavItem.Editor.route) { inclusive = true }
+                            popUpTo(navController.graph.startDestinationId) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
                         }
                     }
                 )
