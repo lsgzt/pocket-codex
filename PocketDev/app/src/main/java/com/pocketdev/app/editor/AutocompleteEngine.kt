@@ -24,11 +24,72 @@ object AutocompleteEngine {
         val prefix = getWordPrefix(code, cursorPosition)
         if (prefix.length < 2) return emptyList()
 
-        val completions = getCompletionsForLanguage(language)
-        return completions
+        val staticCompletions = getCompletionsForLanguage(language)
+        val userIdentifiers = extractUserDefinedIdentifiers(code, language)
+        val staticNames = staticCompletions.map { it.text }.toHashSet()
+        val uniqueUserIdentifiers = userIdentifiers.filter { it.text !in staticNames }
+
+        val allCompletions = uniqueUserIdentifiers + staticCompletions
+
+        return allCompletions
             .filter { it.text.startsWith(prefix, ignoreCase = true) && it.text != prefix }
-            .sortedWith(compareBy({ !it.text.startsWith(prefix) }, { it.text.length }, { it.text }))
+            .sortedWith(compareBy(
+                { it.type != CompletionType.VARIABLE },
+                { !it.text.startsWith(prefix) },
+                { it.text.length },
+                { it.text }
+            ))
             .take(10)
+    }
+
+    private val pythonIdentifierPatterns = listOf(
+        Regex("""^[ 	]*([a-zA-Z_]\w*)[ 	]*=""", setOf(RegexOption.MULTILINE)),
+        Regex("""def ([a-zA-Z_]\w*)\s*\("""),
+        Regex("""class ([a-zA-Z_]\w*)[\s:(]"""),
+        Regex("""for ([a-zA-Z_]\w*)\s+in\b""")
+    )
+    private val jsIdentifierPatterns = listOf(
+        Regex("""(?:let|var|const)\s+([a-zA-Z_$][\w$]*)"""),
+        Regex("""function\s+([a-zA-Z_$][\w$]*)\s*\("""),
+        Regex("""class\s+([a-zA-Z_$][\w$]*)""")
+    )
+    private val kotlinIdentifierPatterns = listOf(
+        Regex("""(?:val|var)\s+([a-zA-Z_]\w*)"""),
+        Regex("""fun\s+([a-zA-Z_]\w*)\s*\("""),
+        Regex("""class\s+([a-zA-Z_]\w*)""")
+    )
+    private val javaIdentifierPatterns = listOf(
+        Regex("""(?:int|long|double|float|boolean|String|char)\s+([a-zA-Z_]\w*)"""),
+        Regex("""(?:void|int|String|boolean)\s+([a-zA-Z_]\w*)\s*\("""),
+        Regex("""class\s+([a-zA-Z_]\w*)""")
+    )
+    private val fallbackIdentifierPatterns = listOf(
+        Regex("""(?:let|var|const|def|val)\s+([a-zA-Z_]\w*)""")
+    )
+
+    private fun extractUserDefinedIdentifiers(code: String, language: Language): List<AutocompleteItem> {
+        val scannable = if (code.length > 8000) code.substring(0, 8000) else code
+        val found = mutableSetOf<String>()
+        val patterns = when (language) {
+            Language.PYTHON -> pythonIdentifierPatterns
+            Language.JAVASCRIPT -> jsIdentifierPatterns
+            Language.KOTLIN -> kotlinIdentifierPatterns
+            Language.JAVA -> javaIdentifierPatterns
+            else -> fallbackIdentifierPatterns
+        }
+        for (pattern in patterns) {
+            pattern.findAll(scannable).forEach { match ->
+                val name = match.groupValues[1]
+                if (name.length >= 2) found.add(name)
+            }
+        }
+        return found.map {
+            AutocompleteItem(
+                text = it,
+                description = "Local identifier",
+                type = CompletionType.VARIABLE
+            )
+        }
     }
 
     private fun getWordPrefix(code: String, cursorPos: Int): String {

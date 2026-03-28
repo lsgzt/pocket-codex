@@ -174,11 +174,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         syncFilesJob?.cancel()
         syncFilesJob = viewModelScope.launch {
             delay(500)
-            val files = _currentFiles.value.toMutableList()
+            val files = _currentFiles.value
             val activeIndex = _activeFileIndex.value
-            if (activeIndex in files.indices) {
-                files[activeIndex] = files[activeIndex].copy(code = code)
-                _currentFiles.value = files
+            if (activeIndex in files.indices && files[activeIndex].code != code) {
+                val updated = files.toMutableList()
+                updated[activeIndex] = updated[activeIndex].copy(code = code)
+                _currentFiles.value = updated
             }
         }
 

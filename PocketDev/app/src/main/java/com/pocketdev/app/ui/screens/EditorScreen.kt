@@ -5,6 +5,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebViewClient
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -525,19 +526,14 @@ private fun EditorMainContent(
 
         AnimatedVisibility(
             visible = uiState.showTerminal,
-            // expandVertically grows the container height from 0 → full, anchored at the top.
-            // This means the terminal panel grows downward into view — no empty space ever left behind.
-            enter = expandVertically(
-                expandFrom = Alignment.Top,
-                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(durationMillis = 200)),
-            // shrinkVertically collapses the container height from full → 0 toward the top.
-            // The Column reclaims the space in real-time — no black void remains.
-            // (slideOutVertically was the bug: it only translates the content, leaving a ghost space)
-            exit = shrinkVertically(
-                shrinkTowards = Alignment.Top,
-                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(durationMillis = 180)),
+            enter = slideInVertically(
+                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                initialOffsetY = { fullHeight -> fullHeight }
+            ),
+            exit = slideOutVertically(
+                animationSpec = tween(durationMillis = 220, easing = FastOutLinearInEasing),
+                targetOffsetY = { fullHeight -> fullHeight }
+            ),
             modifier = if (uiState.isTerminalFullScreen) Modifier.weight(1f) else Modifier
         ) {
             // NOTE: shadowElevation is intentionally NOT used here.
@@ -1428,7 +1424,7 @@ fun CodeEditor(
         val cursorPosition = textFieldValue.selection.start
         if (autocompleteEnabled && cursorPosition <= textFieldValue.text.length) {
             // Debounce autocomplete to avoid stuttering
-            delay(200)
+            delay(120)
             val newSuggestions = withContext(Dispatchers.Default) {
                 AutocompleteEngine.getSuggestions(textFieldValue.text, cursorPosition, language)
             }
