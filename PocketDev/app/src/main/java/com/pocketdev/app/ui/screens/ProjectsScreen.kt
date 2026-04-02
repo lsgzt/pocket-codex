@@ -57,24 +57,15 @@ fun ProjectsScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     var showDeleteDialog by remember { mutableStateOf<Project?>(null) }
     var showNewProjectDialog by remember { mutableStateOf(false) }
+    
+    // Performance-aware settings
+    val tier = rememberPerformanceTier()
+    val enableComplexAnimations = tier != DevicePerformance.Tier.LOW
 
     val onOpenNewProjectDialog = remember { { showNewProjectDialog = true } }
     val onSearchQueryChange = remember { { query: String -> viewModel.setSearchQuery(query) } }
     val onClearSearch = remember { { viewModel.setSearchQuery("") } }
     val onDismissDeleteDialog = remember { { showDeleteDialog = null } }
-
-    // Animated background gradient
-    val gradientColors = LocalGradientColors.current
-    val infiniteTransition = rememberInfiniteTransition(label = "backgroundAnimation")
-    val animatedOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(20000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "gradientOffset"
-    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -87,16 +78,9 @@ fun ProjectsScreen(
                     ) 
                 },
                 actions = {
-                    // Animated add button
-                    val addInteractionSource = remember { MutableInteractionSource() }
-                    val isAddPressed by addInteractionSource.collectIsPressedAsState()
-                    
                     FilledTonalButton(
                         onClick = onOpenNewProjectDialog,
-                        interactionSource = addInteractionSource,
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .scale(if (isAddPressed) 0.95f else 1f),
+                        modifier = Modifier.padding(end = 12.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         )
@@ -122,62 +106,38 @@ fun ProjectsScreen(
                 .padding(paddingValues)
                 .consumeWindowInsets(paddingValues)
         ) {
-            // Animated search bar
-            AnimatedVisibility(
-                visible = true,
-                enter = slideInVertically(
-                    animationSpec = tween(
-                        durationMillis = AnimationDuration.STANDARD,
-                        easing = EasingCurves.easeOut
-                    ),
-                    initialOffsetY = { -it }
-                ) + fadeIn(),
-                exit = slideOutVertically(
-                    animationSpec = tween(
-                        durationMillis = AnimationDuration.QUICK,
-                        easing = EasingCurves.easeIn
-                    ),
-                    targetOffsetY = { -it }
-                ) + fadeOut()
-            ) {
-                PremiumSearchBar(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    onClear = onClearSearch,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
+            // Simple search bar (no heavy animation on load)
+            PremiumSearchBar(
+                value = searchQuery,
+                onValueChange = onSearchQueryChange,
+                onClear = onClearSearch,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
 
             if (projects.isEmpty()) {
                 EmptyProjectsView(
                     onCreateNew = onOpenNewProjectDialog
                 )
             } else {
-                // Animated project count
-                AnimatedVisibility(
-                    visible = projects.isNotEmpty(),
-                    enter = fadeIn(animationSpec = TweenSpecs.fadeStandard),
-                    exit = fadeOut(animationSpec = TweenSpecs.fadeQuick)
+                // Simple project count (no animation)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Text(
+                        text = "${projects.size} project${if (projects.size != 1) "s" else ""}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (searchQuery.isNotBlank()) {
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "${projects.size} project${if (projects.size != 1) "s" else ""}",
+                            text = "• filtered",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.primary
                         )
-                        if (searchQuery.isNotBlank()) {
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "• filtered",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
                     }
                 }
 
@@ -185,10 +145,10 @@ fun ProjectsScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    itemsIndexed(
+                    items(
                         items = projects,
-                        key = { _, project -> project.id }
-                    ) { index, project ->
+                        key = { project -> project.id }
+                    ) { project ->
                         val onOpen = remember(project) {
                             {
                                 viewModel.loadProject(project)
@@ -198,10 +158,9 @@ fun ProjectsScreen(
                         val onDelete = remember(project) { { showDeleteDialog = project } }
                         val onDuplicate = remember(project) { { viewModel.duplicateProject(project) } }
 
-                        // Staggered animated card
-                        StaggeredProjectCard(
+                        // Optimized project card
+                        OptimizedProjectCard(
                             project = project,
-                            index = index,
                             onClick = onOpen,
                             onDelete = onDelete,
                             onDuplicate = onDuplicate
@@ -217,7 +176,7 @@ fun ProjectsScreen(
         }
     }
 
-    // Delete confirmation with animation
+    // Delete confirmation dialog
     showDeleteDialog?.let { project ->
         AnimatedDeleteDialog(
             project = project,
@@ -229,18 +188,8 @@ fun ProjectsScreen(
         )
     }
 
-    // New project dialog with animation
-    AnimatedVisibility(
-        visible = showNewProjectDialog,
-        enter = scaleIn(
-            animationSpec = SpringSpecs.bouncy,
-            initialScale = 0.8f
-        ) + fadeIn(),
-        exit = scaleOut(
-            animationSpec = SpringSpecs.snappy,
-            targetScale = 0.8f
-        ) + fadeOut()
-    ) {
+    // New project dialog
+    if (showNewProjectDialog) {
         val onCreateProject = remember(viewModel, onOpenProject) {
             { name: String, language: com.pocketdev.app.data.models.Language ->
                 viewModel.newFile(language)
@@ -347,109 +296,39 @@ private fun PremiumSearchBar(
 }
 
 // ============================================================
-// STAGGERED PROJECT CARD
+// OPTIMIZED PROJECT CARD
 // ============================================================
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StaggeredProjectCard(
-    project: Project,
-    index: Int,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-    onDuplicate: () -> Unit
-) {
-    // Staggered animation delay
-    val delay = remember(index) { index * AnimationDelay.STAGGER_MEDIUM }
-    
-    // Animated visibility state
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(delay.toLong())
-        visible = true
-    }
-    
-    AnimatedVisibility(
-        visible = visible,
-        enter = slideInVertically(
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMedium
-            ),
-            initialOffsetY = { 60 }
-        ) + fadeIn(
-            animationSpec = tween(
-                durationMillis = AnimationDuration.STANDARD,
-                easing = EasingCurves.easeOut
-            )
-        ),
-        exit = slideOutVertically(
-            animationSpec = tween(AnimationDuration.QUICK),
-            targetOffsetY = { -30 }
-        ) + fadeOut(animationSpec = TweenSpecs.fadeQuick)
-    ) {
-        PremiumProjectCard(
-            project = project,
-            onClick = onClick,
-            onDelete = onDelete,
-            onDuplicate = onDuplicate
-        )
-    }
-}
-
-// ============================================================
-// PREMIUM PROJECT CARD
-// ============================================================
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PremiumProjectCard(
+private fun OptimizedProjectCard(
     project: Project,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onDuplicate: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val tier = rememberPerformanceTier()
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val isHovered by interactionSource.collectIsHoveredAsState()
     
     val dateFormat = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
     val formattedDate = remember(project.modifiedAt) { dateFormat.format(Date(project.modifiedAt)) }
     
-    // Animated elevation
-    val animatedElevation by animateDpAsState(
-        targetValue = when {
-            isPressed -> 1.dp
-            isHovered -> 8.dp
-            else -> 3.dp
-        },
-        animationSpec = SpringSpecs.gentleDp,
-        label = "cardElevation"
-    )
-    
-    // Animated scale
+    // Simple scale animation (tween instead of spring)
     val animatedScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
-        animationSpec = SpringSpecs.card,
+        targetValue = if (isPressed) 0.98f else 1f,
+        animationSpec = OptimizedAnimations.rememberButtonPressSpec(tier),
         label = "cardScale"
     )
-    
-    // Card shadow color
-    val shadowColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
     
     Card(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .scale(animatedScale)
-            .graphicsLayer {
-                shadowElevation = animatedElevation.value
-                ambientShadowColor = shadowColor
-                spotShadowColor = shadowColor
-            },
+            .scale(animatedScale),
         shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = animatedElevation),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
@@ -461,11 +340,8 @@ private fun PremiumProjectCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Animated language icon
-            LanguageIconBadge(
-                language = project.language,
-                isHovered = isHovered
-            )
+            // Language icon (no hover animation on low-end)
+            SimpleLanguageIcon(language = project.language)
 
             Spacer(Modifier.width(16.dp))
 
@@ -497,7 +373,6 @@ private fun PremiumProjectCard(
                     
                     Spacer(Modifier.width(8.dp))
                     
-                    // Date with clock icon
                     Icon(
                         Icons.Outlined.Schedule,
                         contentDescription = null,
@@ -515,7 +390,7 @@ private fun PremiumProjectCard(
                 }
             }
 
-            // Animated menu button
+            // Menu button
             Box {
                 IconButton(
                     onClick = { showMenu = true },
@@ -533,63 +408,21 @@ private fun PremiumProjectCard(
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier
                         .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium)
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = MaterialTheme.shapes.medium
-                        )
                 ) {
                     DropdownMenuItem(
-                        text = { 
-                            Text(
-                                "Open",
-                                fontWeight = FontWeight.Medium
-                            ) 
-                        },
-                        leadingIcon = { 
-                            Icon(
-                                Icons.Outlined.OpenInNew, 
-                                null,
-                                tint = MaterialTheme.colorScheme.primary
-                            ) 
-                        },
+                        text = { Text("Open", fontWeight = FontWeight.Medium) },
+                        leadingIcon = { Icon(Icons.Outlined.OpenInNew, null, tint = MaterialTheme.colorScheme.primary) },
                         onClick = { onClick(); showMenu = false }
                     )
                     DropdownMenuItem(
-                        text = { 
-                            Text(
-                                "Duplicate",
-                                fontWeight = FontWeight.Medium
-                            ) 
-                        },
-                        leadingIcon = { 
-                            Icon(
-                                Icons.Outlined.ContentCopy, 
-                                null,
-                                tint = MaterialTheme.colorScheme.secondary
-                            ) 
-                        },
+                        text = { Text("Duplicate", fontWeight = FontWeight.Medium) },
+                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null, tint = MaterialTheme.colorScheme.secondary) },
                         onClick = { onDuplicate(); showMenu = false }
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     DropdownMenuItem(
-                        text = { 
-                            Text(
-                                "Delete",
-                                color = MaterialTheme.colorScheme.error,
-                                fontWeight = FontWeight.Medium
-                            ) 
-                        },
-                        leadingIcon = { 
-                            Icon(
-                                Icons.Outlined.Delete,
-                                null,
-                                tint = MaterialTheme.colorScheme.error
-                            ) 
-                        },
+                        text = { Text("Delete", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Medium) },
+                        leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
                         onClick = { onDelete(); showMenu = false }
                     )
                 }
@@ -599,80 +432,37 @@ private fun PremiumProjectCard(
 }
 
 // ============================================================
-// LANGUAGE ICON BADGE
+// SIMPLE LANGUAGE ICON (no hover animation)
 // ============================================================
 
 @Composable
-private fun LanguageIconBadge(
-    language: com.pocketdev.app.data.models.Language,
-    isHovered: Boolean
-) {
-    // Animated scale on hover
-    val animatedScale by animateFloatAsState(
-        targetValue = if (isHovered) 1.1f else 1f,
-        animationSpec = SpringSpecs.bouncy,
-        label = "iconScale"
-    )
-    
-    val animatedElevation by animateDpAsState(
-        targetValue = if (isHovered) 8.dp else 2.dp,
-        animationSpec = SpringSpecs.gentleDp,
-        label = "iconElevation"
-    )
-    
-    // Get gradient colors based on language
+private fun SimpleLanguageIcon(language: com.pocketdev.app.data.models.Language) {
     val gradientColors = remember(language) {
         when (language) {
-            com.pocketdev.app.data.models.Language.PYTHON -> listOf(
-                Color(0xFF3776AB),
-                Color(0xFF4B8BBE)
-            )
-            com.pocketdev.app.data.models.Language.JAVASCRIPT -> listOf(
-                Color(0xFFF7DF1E),
-                Color(0xFFF0DB4F)
-            )
-            com.pocketdev.app.data.models.Language.HTML -> listOf(
-                Color(0xFFE34F26),
-                Color(0xFFF06529)
-            )
-            com.pocketdev.app.data.models.Language.CSS -> listOf(
-                Color(0xFF1572B6),
-                Color(0xFF33A9DC)
-            )
-            com.pocketdev.app.data.models.Language.JAVA -> listOf(
-                Color(0xFFED8B00),
-                Color(0xFFFFA726)
-            )
-            com.pocketdev.app.data.models.Language.CPP -> listOf(
-                Color(0xFF00599C),
-                Color(0xFF004482)
-            )
-            com.pocketdev.app.data.models.Language.KOTLIN -> listOf(
-                Color(0xFF7F52FF),
-                Color(0xFFC711E1)
-            )
-            com.pocketdev.app.data.models.Language.JSON -> listOf(
-                Color(0xFF4A90A4),
-                Color(0xFF5FA8B3)
-            )
+            com.pocketdev.app.data.models.Language.PYTHON -> listOf(Color(0xFF3776AB), Color(0xFF4B8BBE))
+            com.pocketdev.app.data.models.Language.JAVASCRIPT -> listOf(Color(0xFFF7DF1E), Color(0xFFF0DB4F))
+            com.pocketdev.app.data.models.Language.HTML -> listOf(Color(0xFFE34F26), Color(0xFFF06529))
+            com.pocketdev.app.data.models.Language.CSS -> listOf(Color(0xFF1572B6), Color(0xFF33A9DC))
+            com.pocketdev.app.data.models.Language.JAVA -> listOf(Color(0xFFED8B00), Color(0xFFFFA726))
+            com.pocketdev.app.data.models.Language.CPP -> listOf(Color(0xFF00599C), Color(0xFF004482))
+            com.pocketdev.app.data.models.Language.KOTLIN -> listOf(Color(0xFF7F52FF), Color(0xFFC711E1))
+            com.pocketdev.app.data.models.Language.JSON -> listOf(Color(0xFF4A90A4), Color(0xFF5FA8B3))
         }
     }
     
     Surface(
-        modifier = Modifier.scale(animatedScale),
         shape = MaterialTheme.shapes.medium,
-        tonalElevation = animatedElevation,
-        shadowElevation = animatedElevation
+        shadowElevation = 2.dp
     ) {
         Box(
             modifier = Modifier
-                .size(52.dp)
+                .size(48.dp)
                 .background(Brush.linearGradient(gradientColors)),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = language.icon,
-                style = MaterialTheme.typography.titleLarge
+                style = MaterialTheme.typography.titleMedium
             )
         }
     }
@@ -748,45 +538,23 @@ private fun AnimatedDeleteDialog(
 }
 
 // ============================================================
-// EMPTY PROJECTS VIEW - Enhanced with animations
+// EMPTY PROJECTS VIEW - Simplified
 // ============================================================
 
 @Composable
 fun EmptyProjectsView(onCreateNew: () -> Unit) {
-    val breathingScale = rememberBreathingAnimation(
-        minValue = 0.95f,
-        maxValue = 1.05f,
-        durationMs = 2000
-    )
-    
-    val infiniteTransition = rememberInfiniteTransition(label = "floatAnimation")
-    val floatOffset by infiniteTransition.animateFloat(
-        initialValue = -5f,
-        targetValue = 5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = EasingCurves.easeInOut),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "floatOffset"
-    )
-    
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.graphicsLayer {
-                translationY = floatOffset
-            }
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Animated folder icon
+            // Simple folder icon (no breathing animation)
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .size(100.dp)
-                    .scale(breathingScale)
+                modifier = Modifier.size(100.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
@@ -815,14 +583,9 @@ fun EmptyProjectsView(onCreateNew: () -> Unit) {
             
             Spacer(Modifier.height(32.dp))
             
-            // Animated create button
-            val gradientColors = LocalGradientColors.current
-            
             FilledTonalButton(
                 onClick = onCreateNew,
-                modifier = Modifier
-                    .height(48.dp)
-                    .padding(horizontal = 8.dp),
+                modifier = Modifier.height(48.dp),
                 colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ),
