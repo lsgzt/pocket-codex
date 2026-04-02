@@ -1,0 +1,35 @@
+{
+  "name": "darcula",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#242424",
+    "editor.foreground": "#cccccc",
+    "editor.selectionBackground": "#214283",
+    "editor.lineHighlightBackground": "#2B2B2B",
+    "editorLineNumber.foreground": "#606060",
+    "editorCursor.foreground": "#bbbbbb"
+  },
+  "tokenColors": [
+    {"scope": "comment",                         "settings": {"foreground": "#707070", "fontStyle": "italic"}},
+    {"scope": "keyword, keyword.control",        "settings": {"foreground": "#CC7832"}},
+    {"scope": "keyword.operator",                "settings": {"foreground": "#CCCCCC"}},
+    {"scope": "storage.type, storage.modifier", "settings": {"foreground": "#CC7832"}},
+    {"scope": "string",                          "settings": {"foreground": "#6A8759"}},
+    {"scope": "string.escape",                   "settings": {"foreground": "#CC7832"}},
+    {"scope": "constant.numeric",                "settings": {"foreground": "#6897BB"}},
+    {"scope": "constant.language",               "settings": {"foreground": "#CC7832"}},
+    {"scope": "constant.character, constant.other", "settings": {"foreground": "#6897BB"}},
+    {"scope": "variable",                        "settings": {"foreground": "#cccccc"}},
+    {"scope": "variable.language",               "settings": {"foreground": "#CC7832"}},
+    {"scope": "entity.name.function",            "settings": {"foreground": "#FFC66D"}},
+    {"scope": "entity.name.type, entity.name.class", "settings": {"foreground": "#A9B7C6"}},
+    {"scope": "entity.name.tag",                 "settings": {"foreground": "#E8BF6A"}},
+    {"scope": "entity.other.attribute-name",     "settings": {"foreground": "#BABABA"}},
+    {"scope": "support.function",                "settings": {"foreground": "#FFC66D"}},
+    {"scope": "support.class",                   "settings": {"foreground": "#A9B7C6"}},
+    {"scope": "support.type, support.other",     "settings": {"foreground": "#A9B7C6"}},
+    {"scope": "invalid",                         "settings": {"foreground": "#FF0000"}},
+    {"scope": "punctuation",                     "settings": {"foreground": "#CCCCCC"}},
+    {"scope": "meta.tag",                        "settings": {"foreground": "#E8BF6A"}}
+  ]
+}

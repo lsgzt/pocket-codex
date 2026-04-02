@@ -1,0 +1,665 @@
+package com.pocketdev.app.editor
+
+import com.pocketdev.app.data.models.Language
+
+data class AutocompleteItem(
+    val text: String,
+    val description: String,
+    val type: CompletionType,
+    val cursorOffset: Int = 0,
+    val insertText: String = text
+)
+
+enum class CompletionType {
+    KEYWORD, FUNCTION, METHOD, CLASS, VARIABLE, SNIPPET, ATTRIBUTE, TAG, PROPERTY, VALUE
+}
+
+object AutocompleteEngine {
+
+    fun getSuggestions(
+        code: String,
+        cursorPosition: Int,
+        language: Language
+    ): List<AutocompleteItem> {
+        val prefix = getWordPrefix(code, cursorPosition)
+        if (prefix.length < 2) return emptyList()
+
+        val staticCompletions = getCompletionsForLanguage(language)
+        val userIdentifiers = extractUserDefinedIdentifiers(code, cursorPosition, language)
+        val staticNames = staticCompletions.map { it.text }.toHashSet()
+        val uniqueUserIdentifiers = userIdentifiers.filter { it.text !in staticNames }
+
+        val allCompletions = uniqueUserIdentifiers + staticCompletions
+
+        return allCompletions
+            .filter { it.text.startsWith(prefix, ignoreCase = true) && it.text != prefix }
+            .sortedWith(compareBy(
+                { it.type != CompletionType.VARIABLE },
+                { !it.text.startsWith(prefix) },
+                { it.text.length },
+                { it.text }
+            ))
+            .take(10)
+    }
+
+    private val pythonIdentifierPatterns = listOf(
+        Regex("""^[ 	]*([a-zA-Z_]\w*)[ 	]*=""", setOf(RegexOption.MULTILINE)),
+        Regex("""def ([a-zA-Z_]\w*)\s*\("""),
+        Regex("""class ([a-zA-Z_]\w*)[\s:(]"""),
+        Regex("""for ([a-zA-Z_]\w*)\s+in\b""")
+    )
+    private val jsIdentifierPatterns = listOf(
+        Regex("""(?:let|var|const)\s+([a-zA-Z_$][\w$]*)"""),
+        Regex("""function\s+([a-zA-Z_$][\w$]*)\s*\("""),
+        Regex("""class\s+([a-zA-Z_$][\w$]*)""")
+    )
+    private val kotlinIdentifierPatterns = listOf(
+        Regex("""(?:val|var)\s+([a-zA-Z_]\w*)"""),
+        Regex("""fun\s+([a-zA-Z_]\w*)\s*\("""),
+        Regex("""class\s+([a-zA-Z_]\w*)""")
+    )
+    private val javaIdentifierPatterns = listOf(
+        Regex("""(?:int|long|double|float|boolean|String|char)\s+([a-zA-Z_]\w*)"""),
+        Regex("""(?:void|int|String|boolean)\s+([a-zA-Z_]\w*)\s*\("""),
+        Regex("""class\s+([a-zA-Z_]\w*)""")
+    )
+    private val fallbackIdentifierPatterns = listOf(
+        Regex("""(?:let|var|const|def|val)\s+([a-zA-Z_]\w*)""")
+    )
+
+    private fun extractUserDefinedIdentifiers(code: String, cursorPosition: Int, language: Language): List<AutocompleteItem> {
+        val safeCursor = cursorPosition.coerceIn(0, code.length)
+        val headSize = 2000
+        val tailSize = 8000
+        val headSegment = if (safeCursor > headSize) code.substring(0, headSize) else ""
+        val tailStart = (safeCursor - tailSize).coerceAtLeast(0)
+        val tailSegment = code.substring(tailStart, safeCursor)
+        val found = mutableSetOf<String>()
+        val patterns = when (language) {
+            Language.PYTHON -> pythonIdentifierPatterns
+            Language.JAVASCRIPT -> jsIdentifierPatterns
+            Language.KOTLIN -> kotlinIdentifierPatterns
+            Language.JAVA -> javaIdentifierPatterns
+            else -> fallbackIdentifierPatterns
+        }
+        for (pattern in patterns) {
+            if (headSegment.isNotEmpty()) {
+                pattern.findAll(headSegment).forEach { match ->
+                    val name = match.groupValues[1]
+                    if (name.length >= 2) found.add(name)
+                }
+            }
+            pattern.findAll(tailSegment).forEach { match ->
+                val name = match.groupValues[1]
+                if (name.length >= 2) found.add(name)
+            }
+        }
+        return found.map {
+            AutocompleteItem(
+                text = it,
+                description = "Local identifier",
+                type = CompletionType.VARIABLE
+            )
+        }
+    }
+
+    private fun getWordPrefix(code: String, cursorPos: Int): String {
+        if (cursorPos <= 0 || cursorPos > code.length) return ""
+        var start = cursorPos - 1
+        while (start >= 0 && (code[start].isLetterOrDigit() || code[start] == '_' || code[start] == '.')) {
+            start--
+        }
+        return code.substring(start + 1, cursorPos)
+    }
+
+    fun getCompletionsForLanguage(language: Language): List<AutocompleteItem> {
+        return when (language) {
+            Language.PYTHON -> pythonCompletions
+            Language.JAVASCRIPT -> javascriptCompletions
+            Language.HTML -> htmlCompletions
+            Language.CSS -> cssCompletions
+            Language.JAVA -> javaCompletions
+            Language.CPP -> cppCompletions
+            Language.KOTLIN -> kotlinCompletions
+            Language.JSON -> emptyList()
+        }
+    }
+
+    // ─── Python ──────────────────────────────────────────────────────────────
+    private val pythonCompletions = listOf(
+        // Keywords
+        AutocompleteItem("def", "Define a function", CompletionType.KEYWORD),
+        AutocompleteItem("class", "Define a class", CompletionType.KEYWORD),
+        AutocompleteItem("import", "Import a module", CompletionType.KEYWORD),
+        AutocompleteItem("from", "Import from a module", CompletionType.KEYWORD),
+        AutocompleteItem("return", "Return a value from a function", CompletionType.KEYWORD),
+        AutocompleteItem("if", "Conditional statement", CompletionType.KEYWORD),
+        AutocompleteItem("elif", "Else-if condition", CompletionType.KEYWORD),
+        AutocompleteItem("else", "Else clause", CompletionType.KEYWORD),
+        AutocompleteItem("for", "For loop", CompletionType.KEYWORD),
+        AutocompleteItem("while", "While loop", CompletionType.KEYWORD),
+        AutocompleteItem("try", "Try block for exception handling", CompletionType.KEYWORD),
+        AutocompleteItem("except", "Catch exception", CompletionType.KEYWORD),
+        AutocompleteItem("finally", "Finally block", CompletionType.KEYWORD),
+        AutocompleteItem("with", "Context manager", CompletionType.KEYWORD),
+        AutocompleteItem("as", "Alias", CompletionType.KEYWORD),
+        AutocompleteItem("in", "Membership test", CompletionType.KEYWORD),
+        AutocompleteItem("not", "Logical not", CompletionType.KEYWORD),
+        AutocompleteItem("and", "Logical and", CompletionType.KEYWORD),
+        AutocompleteItem("or", "Logical or", CompletionType.KEYWORD),
+        AutocompleteItem("is", "Identity check", CompletionType.KEYWORD),
+        AutocompleteItem("None", "Null value", CompletionType.KEYWORD),
+        AutocompleteItem("True", "Boolean true", CompletionType.KEYWORD),
+        AutocompleteItem("False", "Boolean false", CompletionType.KEYWORD),
+        AutocompleteItem("lambda", "Anonymous function", CompletionType.KEYWORD),
+        AutocompleteItem("yield", "Generator yield", CompletionType.KEYWORD),
+        AutocompleteItem("async", "Asynchronous function", CompletionType.KEYWORD),
+        AutocompleteItem("await", "Await coroutine", CompletionType.KEYWORD),
+        AutocompleteItem("pass", "No-op statement", CompletionType.KEYWORD),
+        AutocompleteItem("break", "Break from loop", CompletionType.KEYWORD),
+        AutocompleteItem("continue", "Continue to next iteration", CompletionType.KEYWORD),
+        AutocompleteItem("global", "Global variable", CompletionType.KEYWORD),
+        AutocompleteItem("nonlocal", "Non-local variable", CompletionType.KEYWORD),
+        AutocompleteItem("del", "Delete variable", CompletionType.KEYWORD),
+        AutocompleteItem("raise", "Raise exception", CompletionType.KEYWORD),
+        AutocompleteItem("assert", "Assertion check", CompletionType.KEYWORD),
+        // Built-ins
+        AutocompleteItem("print", "print() — Output to console", CompletionType.FUNCTION, -1, "print()"),
+        AutocompleteItem("input", "input() — Read from stdin", CompletionType.FUNCTION, -1, "input()"),
+        AutocompleteItem("len", "len() — Length of object", CompletionType.FUNCTION, -1, "len()"),
+        AutocompleteItem("range", "range()", CompletionType.FUNCTION, -1, "range()"),
+        AutocompleteItem("type", "type() — Get type", CompletionType.FUNCTION, -1, "type()"),
+        AutocompleteItem("int", "int() — Convert to integer", CompletionType.CLASS, -1, "int()"),
+        AutocompleteItem("str", "str() — Convert to string", CompletionType.CLASS, -1, "str()"),
+        AutocompleteItem("float", "float() — Convert to float", CompletionType.CLASS, -1, "float()"),
+        AutocompleteItem("bool", "bool() — Convert to boolean", CompletionType.CLASS, -1, "bool()"),
+        AutocompleteItem("list", "list() — Create list", CompletionType.CLASS, -1, "list()"),
+        AutocompleteItem("dict", "dict() — Create dictionary", CompletionType.CLASS, -1, "dict()"),
+        AutocompleteItem("set", "set() — Create set", CompletionType.CLASS, -1, "set()"),
+        AutocompleteItem("tuple", "tuple() — Create tuple", CompletionType.CLASS, -1, "tuple()"),
+        AutocompleteItem("enumerate", "enumerate() — Indexed iteration", CompletionType.FUNCTION, -1, "enumerate()"),
+        AutocompleteItem("zip", "zip() — Zip iterables", CompletionType.FUNCTION, -1, "zip()"),
+        AutocompleteItem("map", "map()", CompletionType.FUNCTION, -1, "map()"),
+        AutocompleteItem("filter", "filter()", CompletionType.FUNCTION, -1, "filter()"),
+        AutocompleteItem("sorted", "sorted()", CompletionType.FUNCTION, -1, "sorted()"),
+        AutocompleteItem("reversed", "reversed()", CompletionType.FUNCTION, -1, "reversed()"),
+        AutocompleteItem("any", "any() — True if any element is true", CompletionType.FUNCTION, -1, "any()"),
+        AutocompleteItem("all", "all() — True if all elements are true", CompletionType.FUNCTION, -1, "all()"),
+        AutocompleteItem("max", "max() — Maximum value", CompletionType.FUNCTION, -1, "max()"),
+        AutocompleteItem("min", "min() — Minimum value", CompletionType.FUNCTION, -1, "min()"),
+        AutocompleteItem("sum", "sum() — Sum of values", CompletionType.FUNCTION, -1, "sum()"),
+        AutocompleteItem("abs", "abs() — Absolute value", CompletionType.FUNCTION, -1, "abs()"),
+        AutocompleteItem("round", "round() — Round number", CompletionType.FUNCTION, -1, "round()"),
+        AutocompleteItem("open", "open() — Open file", CompletionType.FUNCTION, -1, "open()"),
+        AutocompleteItem("isinstance", "isinstance()", CompletionType.FUNCTION, -1, "isinstance()"),
+        AutocompleteItem("super", "super() — Parent class proxy", CompletionType.FUNCTION, -1, "super()"),
+        AutocompleteItem("format", "format(value, spec)", CompletionType.METHOD),
+        AutocompleteItem("append", ".append(item) — Add to list", CompletionType.METHOD),
+        AutocompleteItem("extend", ".extend(iterable) — Extend list", CompletionType.METHOD),
+        AutocompleteItem("insert", ".insert(i, item) — Insert into list", CompletionType.METHOD),
+        AutocompleteItem("remove", ".remove(item) — Remove from list", CompletionType.METHOD),
+        AutocompleteItem("pop", ".pop(index) — Remove and return element", CompletionType.METHOD),
+        AutocompleteItem("sort", ".sort(key=None) — Sort list in-place", CompletionType.METHOD),
+        AutocompleteItem("split", ".split(sep) — Split string", CompletionType.METHOD),
+        AutocompleteItem("join", ".join(iterable) — Join strings", CompletionType.METHOD),
+        AutocompleteItem("strip", ".strip() — Remove whitespace", CompletionType.METHOD),
+        AutocompleteItem("replace", ".replace(old, new) — Replace in string", CompletionType.METHOD),
+        AutocompleteItem("upper", ".upper() — Convert to uppercase", CompletionType.METHOD),
+        AutocompleteItem("lower", ".lower() — Convert to lowercase", CompletionType.METHOD),
+        AutocompleteItem("startswith", ".startswith(prefix) — Check prefix", CompletionType.METHOD),
+        AutocompleteItem("endswith", ".endswith(suffix) — Check suffix", CompletionType.METHOD),
+        AutocompleteItem("get", ".get(key, default) — Dict get", CompletionType.METHOD),
+        AutocompleteItem("keys", ".keys() — Dict keys", CompletionType.METHOD),
+        AutocompleteItem("values", ".values() — Dict values", CompletionType.METHOD),
+        AutocompleteItem("items", ".items() — Dict key-value pairs", CompletionType.METHOD),
+        // Common modules
+        AutocompleteItem("math", "Math module", CompletionType.CLASS),
+        AutocompleteItem("random", "Random module", CompletionType.CLASS),
+        AutocompleteItem("os", "OS module", CompletionType.CLASS),
+        AutocompleteItem("sys", "System module", CompletionType.CLASS),
+        AutocompleteItem("json", "JSON module", CompletionType.CLASS),
+        AutocompleteItem("datetime", "Datetime module", CompletionType.CLASS),
+        AutocompleteItem("collections", "Collections module", CompletionType.CLASS),
+        AutocompleteItem("itertools", "Itertools module", CompletionType.CLASS),
+        AutocompleteItem("functools", "Functools module", CompletionType.CLASS),
+        AutocompleteItem("re", "Regular expressions module", CompletionType.CLASS),
+        // Snippets
+        AutocompleteItem("def_main", "def main():\n    pass\n\nif __name__ == '__main__':\n    main()", CompletionType.SNIPPET),
+        AutocompleteItem("for_range", "for i in range(10):\n    ", CompletionType.SNIPPET),
+        AutocompleteItem("list_comp", "[x for x in iterable if condition]", CompletionType.SNIPPET),
+        AutocompleteItem("try_except", "try:\n    \nexcept Exception as e:\n    print(f'Error: {e}')", CompletionType.SNIPPET),
+        AutocompleteItem("with_open", "with open('file.txt', 'r') as f:\n    content = f.read()", CompletionType.SNIPPET),
+        AutocompleteItem("dataclass", "@dataclass\nclass MyClass:\n    field: type", CompletionType.SNIPPET)
+    )
+
+    // ─── JavaScript ──────────────────────────────────────────────────────────
+    private val javascriptCompletions = listOf(
+        AutocompleteItem("const", "Constant declaration", CompletionType.KEYWORD),
+        AutocompleteItem("let", "Block-scoped variable", CompletionType.KEYWORD),
+        AutocompleteItem("var", "Function-scoped variable", CompletionType.KEYWORD),
+        AutocompleteItem("function", "Function declaration", CompletionType.KEYWORD),
+        AutocompleteItem("class", "Class declaration", CompletionType.KEYWORD),
+        AutocompleteItem("return", "Return value", CompletionType.KEYWORD),
+        AutocompleteItem("if", "Conditional", CompletionType.KEYWORD),
+        AutocompleteItem("else", "Else clause", CompletionType.KEYWORD),
+        AutocompleteItem("for", "For loop", CompletionType.KEYWORD),
+        AutocompleteItem("while", "While loop", CompletionType.KEYWORD),
+        AutocompleteItem("do", "Do-while loop", CompletionType.KEYWORD),
+        AutocompleteItem("switch", "Switch statement", CompletionType.KEYWORD),
+        AutocompleteItem("case", "Switch case", CompletionType.KEYWORD),
+        AutocompleteItem("break", "Break statement", CompletionType.KEYWORD),
+        AutocompleteItem("continue", "Continue statement", CompletionType.KEYWORD),
+        AutocompleteItem("try", "Try block", CompletionType.KEYWORD),
+        AutocompleteItem("catch", "Catch block", CompletionType.KEYWORD),
+        AutocompleteItem("finally", "Finally block", CompletionType.KEYWORD),
+        AutocompleteItem("throw", "Throw error", CompletionType.KEYWORD),
+        AutocompleteItem("new", "Create instance", CompletionType.KEYWORD),
+        AutocompleteItem("this", "Current context", CompletionType.KEYWORD),
+        AutocompleteItem("typeof", "Type of operator", CompletionType.KEYWORD),
+        AutocompleteItem("instanceof", "Instance check", CompletionType.KEYWORD),
+        AutocompleteItem("import", "Import module", CompletionType.KEYWORD),
+        AutocompleteItem("export", "Export module", CompletionType.KEYWORD),
+        AutocompleteItem("async", "Async function", CompletionType.KEYWORD),
+        AutocompleteItem("await", "Await promise", CompletionType.KEYWORD),
+        AutocompleteItem("null", "Null value", CompletionType.KEYWORD),
+        AutocompleteItem("undefined", "Undefined value", CompletionType.KEYWORD),
+        AutocompleteItem("true", "Boolean true", CompletionType.KEYWORD),
+        AutocompleteItem("false", "Boolean false", CompletionType.KEYWORD),
+        AutocompleteItem("console", "Console object for logging", CompletionType.CLASS),
+        AutocompleteItem("console.log", "console.log(msg) — Log message", CompletionType.METHOD),
+        AutocompleteItem("console.error", "console.error(msg) — Log error", CompletionType.METHOD),
+        AutocompleteItem("console.warn", "console.warn(msg) — Log warning", CompletionType.METHOD),
+        AutocompleteItem("Math", "Math object", CompletionType.CLASS),
+        AutocompleteItem("Math.round", "Math.round(x) — Round number", CompletionType.METHOD),
+        AutocompleteItem("Math.floor", "Math.floor(x) — Floor number", CompletionType.METHOD),
+        AutocompleteItem("Math.ceil", "Math.ceil(x) — Ceiling", CompletionType.METHOD),
+        AutocompleteItem("Math.random", "Math.random() — Random 0-1", CompletionType.METHOD),
+        AutocompleteItem("Math.max", "Math.max(...values)", CompletionType.METHOD),
+        AutocompleteItem("Math.min", "Math.min(...values)", CompletionType.METHOD),
+        AutocompleteItem("Math.abs", "Math.abs(x) — Absolute value", CompletionType.METHOD),
+        AutocompleteItem("Math.sqrt", "Math.sqrt(x) — Square root", CompletionType.METHOD),
+        AutocompleteItem("Math.pow", "Math.pow(x, y) — Power", CompletionType.METHOD),
+        AutocompleteItem("Array", "Array class", CompletionType.CLASS),
+        AutocompleteItem("Array.from", "Array.from(iterable)", CompletionType.METHOD),
+        AutocompleteItem("Array.isArray", "Array.isArray(val)", CompletionType.METHOD),
+        AutocompleteItem("JSON", "JSON object", CompletionType.CLASS),
+        AutocompleteItem("JSON.stringify", "JSON.stringify(obj)", CompletionType.METHOD),
+        AutocompleteItem("JSON.parse", "JSON.parse(str)", CompletionType.METHOD),
+        AutocompleteItem("Promise", "Promise class", CompletionType.CLASS),
+        AutocompleteItem("Promise.all", "Promise.all(promises)", CompletionType.METHOD),
+        AutocompleteItem("Promise.resolve", "Promise.resolve(value)", CompletionType.METHOD),
+        AutocompleteItem("fetch", "fetch(url, options) — HTTP request", CompletionType.FUNCTION),
+        AutocompleteItem("setTimeout", "setTimeout(fn, ms)", CompletionType.FUNCTION),
+        AutocompleteItem("setInterval", "setInterval(fn, ms)", CompletionType.FUNCTION),
+        AutocompleteItem("clearTimeout", "clearTimeout(id)", CompletionType.FUNCTION),
+        AutocompleteItem("parseInt", "parseInt(str, radix)", CompletionType.FUNCTION),
+        AutocompleteItem("parseFloat", "parseFloat(str)", CompletionType.FUNCTION),
+        AutocompleteItem("isNaN", "isNaN(value)", CompletionType.FUNCTION),
+        AutocompleteItem("forEach", ".forEach(callback) — Iterate array", CompletionType.METHOD),
+        AutocompleteItem("map", ".map(callback) — Transform array", CompletionType.METHOD),
+        AutocompleteItem("filter", ".filter(callback) — Filter array", CompletionType.METHOD),
+        AutocompleteItem("reduce", ".reduce(callback, init)", CompletionType.METHOD),
+        AutocompleteItem("find", ".find(callback) — Find element", CompletionType.METHOD),
+        AutocompleteItem("findIndex", ".findIndex(callback)", CompletionType.METHOD),
+        AutocompleteItem("some", ".some(callback) — Any match", CompletionType.METHOD),
+        AutocompleteItem("every", ".every(callback) — All match", CompletionType.METHOD),
+        AutocompleteItem("includes", ".includes(value) — Check inclusion", CompletionType.METHOD),
+        AutocompleteItem("indexOf", ".indexOf(value) — Find index", CompletionType.METHOD),
+        AutocompleteItem("push", ".push(item) — Add to array", CompletionType.METHOD),
+        AutocompleteItem("pop", ".pop() — Remove last item", CompletionType.METHOD),
+        AutocompleteItem("shift", ".shift() — Remove first item", CompletionType.METHOD),
+        AutocompleteItem("unshift", ".unshift(item) — Add to front", CompletionType.METHOD),
+        AutocompleteItem("splice", ".splice(start, count, ...items)", CompletionType.METHOD),
+        AutocompleteItem("slice", ".slice(start, end)", CompletionType.METHOD),
+        AutocompleteItem("sort", ".sort(compareFn) — Sort array", CompletionType.METHOD),
+        AutocompleteItem("reverse", ".reverse() — Reverse array", CompletionType.METHOD),
+        AutocompleteItem("join", ".join(sep) — Join to string", CompletionType.METHOD),
+        AutocompleteItem("split", ".split(sep) — Split string", CompletionType.METHOD),
+        AutocompleteItem("trim", ".trim() — Remove whitespace", CompletionType.METHOD),
+        AutocompleteItem("replace", ".replace(search, replace)", CompletionType.METHOD),
+        AutocompleteItem("toUpperCase", ".toUpperCase()", CompletionType.METHOD),
+        AutocompleteItem("toLowerCase", ".toLowerCase()", CompletionType.METHOD),
+        AutocompleteItem("toString", ".toString()", CompletionType.METHOD),
+        AutocompleteItem("length", ".length — Length property", CompletionType.PROPERTY),
+        // Snippets
+        AutocompleteItem("arrow_fn", "const fn = (param) => {\n    \n};", CompletionType.SNIPPET),
+        AutocompleteItem("async_fn", "async function fn() {\n    try {\n        await \n    } catch (error) {\n        console.error(error);\n    }\n}", CompletionType.SNIPPET),
+        AutocompleteItem("promise", "new Promise((resolve, reject) => {\n    \n});", CompletionType.SNIPPET),
+        AutocompleteItem("class_def", "class MyClass {\n    constructor() {\n        \n    }\n}", CompletionType.SNIPPET),
+        AutocompleteItem("for_of", "for (const item of items) {\n    \n}", CompletionType.SNIPPET),
+        AutocompleteItem("destruct", "const { prop1, prop2 } = obj;", CompletionType.SNIPPET)
+    )
+
+    // ─── HTML ────────────────────────────────────────────────────────────────
+    private val htmlCompletions = listOf(
+        // Structure tags
+        AutocompleteItem("html", "<html lang=\"en\">\n    \n</html>", CompletionType.TAG, -8, "<html lang=\"en\">\n    \n</html>"),
+        AutocompleteItem("head", "<head>\n    \n</head>", CompletionType.TAG, -8, "<head>\n    \n</head>"),
+        AutocompleteItem("body", "<body>\n    \n</body>", CompletionType.TAG, -8, "<body>\n    \n</body>"),
+        AutocompleteItem("div", "<div></div> — Generic container", CompletionType.TAG, -6, "<div></div>"),
+        AutocompleteItem("span", "<span></span> — Inline container", CompletionType.TAG, -7, "<span></span>"),
+        AutocompleteItem("main", "<main></main> — Main content", CompletionType.TAG, -7, "<main></main>"),
+        AutocompleteItem("section", "<section></section>", CompletionType.TAG, -10, "<section></section>"),
+        AutocompleteItem("article", "<article></article>", CompletionType.TAG, -10, "<article></article>"),
+        AutocompleteItem("aside", "<aside></aside>", CompletionType.TAG, -8, "<aside></aside>"),
+        AutocompleteItem("header", "<header></header>", CompletionType.TAG, -9, "<header></header>"),
+        AutocompleteItem("footer", "<footer></footer>", CompletionType.TAG, -9, "<footer></footer>"),
+        AutocompleteItem("nav", "<nav></nav> — Navigation", CompletionType.TAG, -6, "<nav></nav>"),
+        // Text tags
+        AutocompleteItem("h1", "<h1></h1> — Heading 1", CompletionType.TAG, -5, "<h1></h1>"),
+        AutocompleteItem("h2", "<h2></h2> — Heading 2", CompletionType.TAG, -5, "<h2></h2>"),
+        AutocompleteItem("h3", "<h3></h3> — Heading 3", CompletionType.TAG, -5, "<h3></h3>"),
+        AutocompleteItem("h4", "<h4></h4> — Heading 4", CompletionType.TAG, -5, "<h4></h4>"),
+        AutocompleteItem("h5", "<h5></h5> — Heading 5", CompletionType.TAG, -5, "<h5></h5>"),
+        AutocompleteItem("h6", "<h6></h6> — Heading 6", CompletionType.TAG, -5, "<h6></h6>"),
+        AutocompleteItem("p", "<p></p> — Paragraph", CompletionType.TAG, -4, "<p></p>"),
+        AutocompleteItem("strong", "<strong></strong> — Bold", CompletionType.TAG, -9, "<strong></strong>"),
+        AutocompleteItem("em", "<em></em> — Italic", CompletionType.TAG, -5, "<em></em>"),
+        AutocompleteItem("br", "<br> — Line break", CompletionType.TAG, 0, "<br>"),
+        AutocompleteItem("hr", "<hr> — Horizontal rule", CompletionType.TAG, 0, "<hr>"),
+        AutocompleteItem("code", "<code></code> — Inline code", CompletionType.TAG, -7, "<code></code>"),
+        AutocompleteItem("pre", "<pre></pre> — Preformatted", CompletionType.TAG, -6, "<pre></pre>"),
+        AutocompleteItem("blockquote", "<blockquote></blockquote>", CompletionType.TAG, -13, "<blockquote></blockquote>"),
+        // Lists
+        AutocompleteItem("ul", "<ul>\n    \n</ul> — Unordered list", CompletionType.TAG, -6, "<ul>\n    \n</ul>"),
+        AutocompleteItem("ol", "<ol>\n    \n</ol> — Ordered list", CompletionType.TAG, -6, "<ol>\n    \n</ol>"),
+        AutocompleteItem("li", "<li></li> — List item", CompletionType.TAG, -5, "<li></li>"),
+        AutocompleteItem("dl", "<dl>\n    \n</dl> — Description list", CompletionType.TAG, -6, "<dl>\n    \n</dl>"),
+        AutocompleteItem("dt", "<dt></dt> — Description term", CompletionType.TAG, -5, "<dt></dt>"),
+        AutocompleteItem("dd", "<dd></dd> — Description detail", CompletionType.TAG, -5, "<dd></dd>"),
+        // Links & media
+        AutocompleteItem("a", "<a href=\"\"></a> — Link", CompletionType.TAG, -6, "<a href=\"\"></a>"),
+        AutocompleteItem("img", "<img src=\"\" alt=\"\"> — Image", CompletionType.TAG, -9, "<img src=\"\" alt=\"\">"),
+        AutocompleteItem("video", "<video src=\"\" controls></video>", CompletionType.TAG, -19, "<video src=\"\" controls></video>"),
+        AutocompleteItem("audio", "<audio src=\"\" controls></audio>", CompletionType.TAG, -19, "<audio src=\"\" controls></audio>"),
+        AutocompleteItem("iframe", "<iframe src=\"\"></iframe>", CompletionType.TAG, -11, "<iframe src=\"\"></iframe>"),
+        AutocompleteItem("canvas", "<canvas id=\"\" width=\"\" height=\"\"></canvas>", CompletionType.TAG, -29, "<canvas id=\"\" width=\"\" height=\"\"></canvas>"),
+        AutocompleteItem("svg", "<svg viewBox=\"0 0 100 100\">\n    \n</svg>", CompletionType.TAG, -7, "<svg viewBox=\"0 0 100 100\">\n    \n</svg>"),
+        // Forms
+        AutocompleteItem("form", "<form action=\"\" method=\"post\">\n    \n</form>", CompletionType.TAG, -8, "<form action=\"\" method=\"post\">\n    \n</form>"),
+        AutocompleteItem("input", "<input type=\"text\" name=\"\">", CompletionType.TAG, -2, "<input type=\"text\" name=\"\">"),
+        AutocompleteItem("button", "<button type=\"button\"></button>", CompletionType.TAG, -9, "<button type=\"button\"></button>"),
+        AutocompleteItem("textarea", "<textarea name=\"\" rows=\"4\"></textarea>", CompletionType.TAG, -11, "<textarea name=\"\" rows=\"4\"></textarea>"),
+        AutocompleteItem("select", "<select name=\"\">\n    \n</select>", CompletionType.TAG, -10, "<select name=\"\">\n    \n</select>"),
+        AutocompleteItem("option", "<option value=\"\"></option>", CompletionType.TAG, -9, "<option value=\"\"></option>"),
+        AutocompleteItem("label", "<label for=\"\"></label>", CompletionType.TAG, -8, "<label for=\"\"></label>"),
+        AutocompleteItem("fieldset", "<fieldset>\n    \n</fieldset>", CompletionType.TAG, -12, "<fieldset>\n    \n</fieldset>"),
+        AutocompleteItem("legend", "<legend></legend>", CompletionType.TAG, -9, "<legend></legend>"),
+        // Table
+        AutocompleteItem("table", "<table>\n    \n</table>", CompletionType.TAG, -9, "<table>\n    \n</table>"),
+        AutocompleteItem("thead", "<thead>\n    \n</thead>", CompletionType.TAG, -9, "<thead>\n    \n</thead>"),
+        AutocompleteItem("tbody", "<tbody>\n    \n</tbody>", CompletionType.TAG, -9, "<tbody>\n    \n</tbody>"),
+        AutocompleteItem("tr", "<tr>\n    \n</tr> — Table row", CompletionType.TAG, -6, "<tr>\n    \n</tr>"),
+        AutocompleteItem("th", "<th></th> — Table header", CompletionType.TAG, -5, "<th></th>"),
+        AutocompleteItem("td", "<td></td> — Table data", CompletionType.TAG, -5, "<td></td>"),
+        // Meta
+        AutocompleteItem("meta", "<meta name=\"\" content=\"\">", CompletionType.TAG, -14, "<meta name=\"\" content=\"\">"),
+        AutocompleteItem("link", "<link rel=\"stylesheet\" href=\"\">", CompletionType.TAG, -2, "<link rel=\"stylesheet\" href=\"\">"),
+        AutocompleteItem("script", "<script>\n    \n</script>", CompletionType.TAG, -10, "<script>\n    \n</script>"),
+        AutocompleteItem("style", "<style>\n    \n</style>", CompletionType.TAG, -9, "<style>\n    \n</style>"),
+        AutocompleteItem("title", "<title></title>", CompletionType.TAG, -8, "<title></title>"),
+        // Attributes
+        AutocompleteItem("class", "class=\"\" — CSS class", CompletionType.ATTRIBUTE),
+        AutocompleteItem("id", "id=\"\" — Unique identifier", CompletionType.ATTRIBUTE),
+        AutocompleteItem("href", "href=\"\" — Link target", CompletionType.ATTRIBUTE),
+        AutocompleteItem("src", "src=\"\" — Resource source", CompletionType.ATTRIBUTE),
+        AutocompleteItem("alt", "alt=\"\" — Alternative text", CompletionType.ATTRIBUTE),
+        AutocompleteItem("type", "type=\"\" — Input type", CompletionType.ATTRIBUTE),
+        AutocompleteItem("name", "name=\"\" — Input name", CompletionType.ATTRIBUTE),
+        AutocompleteItem("value", "value=\"\" — Input value", CompletionType.ATTRIBUTE),
+        AutocompleteItem("style", "style=\"\" — Inline CSS", CompletionType.ATTRIBUTE),
+        AutocompleteItem("onclick", "onclick=\"\" — Click handler", CompletionType.ATTRIBUTE),
+        AutocompleteItem("placeholder", "placeholder=\"\"", CompletionType.ATTRIBUTE)
+    )
+
+    // ─── CSS ─────────────────────────────────────────────────────────────────
+    private val cssCompletions = listOf(
+        // Layout
+        AutocompleteItem("display", "display: value — Display type", CompletionType.PROPERTY),
+        AutocompleteItem("position", "position: static|relative|absolute|fixed|sticky", CompletionType.PROPERTY),
+        AutocompleteItem("flex", "flex: value — Flex shorthand", CompletionType.PROPERTY),
+        AutocompleteItem("flexbox", "display: flex — Enable flexbox", CompletionType.SNIPPET),
+        AutocompleteItem("grid", "display: grid — Enable grid", CompletionType.PROPERTY),
+        AutocompleteItem("width", "width: value — Element width", CompletionType.PROPERTY),
+        AutocompleteItem("height", "height: value — Element height", CompletionType.PROPERTY),
+        AutocompleteItem("max-width", "max-width: value", CompletionType.PROPERTY),
+        AutocompleteItem("min-width", "min-width: value", CompletionType.PROPERTY),
+        AutocompleteItem("margin", "margin: top right bottom left", CompletionType.PROPERTY),
+        AutocompleteItem("padding", "padding: top right bottom left", CompletionType.PROPERTY),
+        AutocompleteItem("top", "top: value — Top offset", CompletionType.PROPERTY),
+        AutocompleteItem("bottom", "bottom: value — Bottom offset", CompletionType.PROPERTY),
+        AutocompleteItem("left", "left: value — Left offset", CompletionType.PROPERTY),
+        AutocompleteItem("right", "right: value — Right offset", CompletionType.PROPERTY),
+        AutocompleteItem("overflow", "overflow: visible|hidden|scroll|auto", CompletionType.PROPERTY),
+        AutocompleteItem("z-index", "z-index: value — Stack order", CompletionType.PROPERTY),
+        AutocompleteItem("box-sizing", "box-sizing: border-box", CompletionType.PROPERTY),
+        AutocompleteItem("justify-content", "justify-content: flex-start|center|flex-end|space-between", CompletionType.PROPERTY),
+        AutocompleteItem("align-items", "align-items: stretch|center|flex-start|flex-end", CompletionType.PROPERTY),
+        AutocompleteItem("flex-direction", "flex-direction: row|column", CompletionType.PROPERTY),
+        AutocompleteItem("flex-wrap", "flex-wrap: nowrap|wrap", CompletionType.PROPERTY),
+        AutocompleteItem("gap", "gap: value — Grid/flex gap", CompletionType.PROPERTY),
+        AutocompleteItem("grid-template-columns", "grid-template-columns: repeat(3, 1fr)", CompletionType.PROPERTY),
+        // Typography
+        AutocompleteItem("font-family", "font-family: name, fallback", CompletionType.PROPERTY),
+        AutocompleteItem("font-size", "font-size: value — Text size", CompletionType.PROPERTY),
+        AutocompleteItem("font-weight", "font-weight: normal|bold|100-900", CompletionType.PROPERTY),
+        AutocompleteItem("font-style", "font-style: normal|italic", CompletionType.PROPERTY),
+        AutocompleteItem("text-align", "text-align: left|center|right|justify", CompletionType.PROPERTY),
+        AutocompleteItem("text-decoration", "text-decoration: none|underline|line-through", CompletionType.PROPERTY),
+        AutocompleteItem("line-height", "line-height: value", CompletionType.PROPERTY),
+        AutocompleteItem("letter-spacing", "letter-spacing: value", CompletionType.PROPERTY),
+        AutocompleteItem("text-transform", "text-transform: none|uppercase|lowercase", CompletionType.PROPERTY),
+        AutocompleteItem("white-space", "white-space: normal|nowrap|pre", CompletionType.PROPERTY),
+        // Colors & Backgrounds
+        AutocompleteItem("color", "color: value — Text color", CompletionType.PROPERTY),
+        AutocompleteItem("background", "background: value — Background shorthand", CompletionType.PROPERTY),
+        AutocompleteItem("background-color", "background-color: value", CompletionType.PROPERTY),
+        AutocompleteItem("background-image", "background-image: url()", CompletionType.PROPERTY),
+        AutocompleteItem("opacity", "opacity: 0-1 — Transparency", CompletionType.PROPERTY),
+        // Borders
+        AutocompleteItem("border", "border: width style color", CompletionType.PROPERTY),
+        AutocompleteItem("border-radius", "border-radius: value — Rounded corners", CompletionType.PROPERTY),
+        AutocompleteItem("border-width", "border-width: value", CompletionType.PROPERTY),
+        AutocompleteItem("border-color", "border-color: value", CompletionType.PROPERTY),
+        AutocompleteItem("outline", "outline: width style color", CompletionType.PROPERTY),
+        // Effects
+        AutocompleteItem("box-shadow", "box-shadow: x y blur spread color", CompletionType.PROPERTY),
+        AutocompleteItem("text-shadow", "text-shadow: x y blur color", CompletionType.PROPERTY),
+        AutocompleteItem("transition", "transition: property duration ease", CompletionType.PROPERTY),
+        AutocompleteItem("transform", "transform: function(value)", CompletionType.PROPERTY),
+        AutocompleteItem("animation", "animation: name duration timing-function", CompletionType.PROPERTY),
+        AutocompleteItem("cursor", "cursor: pointer|default|text|move", CompletionType.PROPERTY),
+        AutocompleteItem("visibility", "visibility: visible|hidden", CompletionType.PROPERTY),
+        // Values
+        AutocompleteItem("!important", "!important — Override specificity", CompletionType.VALUE),
+        AutocompleteItem("inherit", "inherit — Inherit from parent", CompletionType.VALUE),
+        AutocompleteItem("initial", "initial — CSS initial value", CompletionType.VALUE),
+        AutocompleteItem("unset", "unset — Remove all styles", CompletionType.VALUE)
+    )
+
+    // ─── Java ────────────────────────────────────────────────────────────────
+    private val javaCompletions = listOf(
+        AutocompleteItem("public", "Public access modifier", CompletionType.KEYWORD),
+        AutocompleteItem("private", "Private access modifier", CompletionType.KEYWORD),
+        AutocompleteItem("protected", "Protected access modifier", CompletionType.KEYWORD),
+        AutocompleteItem("static", "Static member", CompletionType.KEYWORD),
+        AutocompleteItem("final", "Final (constant) modifier", CompletionType.KEYWORD),
+        AutocompleteItem("abstract", "Abstract class/method", CompletionType.KEYWORD),
+        AutocompleteItem("class", "Class declaration", CompletionType.KEYWORD),
+        AutocompleteItem("interface", "Interface declaration", CompletionType.KEYWORD),
+        AutocompleteItem("extends", "Class inheritance", CompletionType.KEYWORD),
+        AutocompleteItem("implements", "Interface implementation", CompletionType.KEYWORD),
+        AutocompleteItem("new", "Create new object", CompletionType.KEYWORD),
+        AutocompleteItem("return", "Return statement", CompletionType.KEYWORD),
+        AutocompleteItem("void", "No return type", CompletionType.KEYWORD),
+        AutocompleteItem("int", "Integer type", CompletionType.KEYWORD),
+        AutocompleteItem("long", "Long integer type", CompletionType.KEYWORD),
+        AutocompleteItem("double", "Double floating point", CompletionType.KEYWORD),
+        AutocompleteItem("float", "Float type", CompletionType.KEYWORD),
+        AutocompleteItem("boolean", "Boolean type", CompletionType.KEYWORD),
+        AutocompleteItem("char", "Character type", CompletionType.KEYWORD),
+        AutocompleteItem("byte", "Byte type", CompletionType.KEYWORD),
+        AutocompleteItem("String", "String class", CompletionType.CLASS),
+        AutocompleteItem("System", "System class", CompletionType.CLASS),
+        AutocompleteItem("System.out.println", "Print to console", CompletionType.METHOD),
+        AutocompleteItem("System.out.print", "Print without newline", CompletionType.METHOD),
+        AutocompleteItem("Math", "Math class", CompletionType.CLASS),
+        AutocompleteItem("ArrayList", "Dynamic array", CompletionType.CLASS),
+        AutocompleteItem("HashMap", "Key-value map", CompletionType.CLASS),
+        AutocompleteItem("Scanner", "Input scanner", CompletionType.CLASS),
+        AutocompleteItem("StringBuilder", "Mutable string builder", CompletionType.CLASS),
+        AutocompleteItem("Exception", "Base exception class", CompletionType.CLASS),
+        AutocompleteItem("RuntimeException", "Runtime exception", CompletionType.CLASS),
+        AutocompleteItem("NullPointerException", "Null pointer exception", CompletionType.CLASS),
+        AutocompleteItem("Override", "@Override annotation", CompletionType.KEYWORD),
+        AutocompleteItem("for", "For loop", CompletionType.KEYWORD),
+        AutocompleteItem("foreach", "For-each loop", CompletionType.SNIPPET),
+        AutocompleteItem("while", "While loop", CompletionType.KEYWORD),
+        AutocompleteItem("if", "If statement", CompletionType.KEYWORD),
+        AutocompleteItem("else", "Else clause", CompletionType.KEYWORD),
+        AutocompleteItem("switch", "Switch statement", CompletionType.KEYWORD),
+        AutocompleteItem("try", "Try block", CompletionType.KEYWORD),
+        AutocompleteItem("catch", "Catch block", CompletionType.KEYWORD),
+        AutocompleteItem("throw", "Throw exception", CompletionType.KEYWORD),
+        AutocompleteItem("throws", "Declare thrown exception", CompletionType.KEYWORD),
+        AutocompleteItem("instanceof", "Type check", CompletionType.KEYWORD),
+        AutocompleteItem("null", "Null literal", CompletionType.KEYWORD),
+        AutocompleteItem("true", "Boolean true", CompletionType.KEYWORD),
+        AutocompleteItem("false", "Boolean false", CompletionType.KEYWORD),
+        AutocompleteItem("this", "Current instance", CompletionType.KEYWORD),
+        AutocompleteItem("super", "Parent class reference", CompletionType.KEYWORD)
+    )
+
+    // ─── C++ ─────────────────────────────────────────────────────────────────
+    private val cppCompletions = listOf(
+        AutocompleteItem("include", "#include <header>", CompletionType.KEYWORD),
+        AutocompleteItem("iostream", "#include <iostream>", CompletionType.SNIPPET),
+        AutocompleteItem("using", "using namespace std;", CompletionType.KEYWORD),
+        AutocompleteItem("namespace", "namespace name { }", CompletionType.KEYWORD),
+        AutocompleteItem("int", "Integer type", CompletionType.KEYWORD),
+        AutocompleteItem("long", "Long integer type", CompletionType.KEYWORD),
+        AutocompleteItem("double", "Double float type", CompletionType.KEYWORD),
+        AutocompleteItem("float", "Float type", CompletionType.KEYWORD),
+        AutocompleteItem("bool", "Boolean type", CompletionType.KEYWORD),
+        AutocompleteItem("char", "Character type", CompletionType.KEYWORD),
+        AutocompleteItem("void", "No type", CompletionType.KEYWORD),
+        AutocompleteItem("string", "std::string type", CompletionType.CLASS),
+        AutocompleteItem("vector", "std::vector<T>", CompletionType.CLASS),
+        AutocompleteItem("map", "std::map<K,V>", CompletionType.CLASS),
+        AutocompleteItem("set", "std::set<T>", CompletionType.CLASS),
+        AutocompleteItem("pair", "std::pair<T1,T2>", CompletionType.CLASS),
+        AutocompleteItem("array", "std::array<T,N>", CompletionType.CLASS),
+        AutocompleteItem("queue", "std::queue<T>", CompletionType.CLASS),
+        AutocompleteItem("stack", "std::stack<T>", CompletionType.CLASS),
+        AutocompleteItem("cout", "std::cout — Output stream", CompletionType.VARIABLE),
+        AutocompleteItem("cin", "std::cin — Input stream", CompletionType.VARIABLE),
+        AutocompleteItem("endl", "std::endl — Line ending", CompletionType.VARIABLE),
+        AutocompleteItem("class", "Class declaration", CompletionType.KEYWORD),
+        AutocompleteItem("struct", "Struct declaration", CompletionType.KEYWORD),
+        AutocompleteItem("public", "Public access", CompletionType.KEYWORD),
+        AutocompleteItem("private", "Private access", CompletionType.KEYWORD),
+        AutocompleteItem("protected", "Protected access", CompletionType.KEYWORD),
+        AutocompleteItem("const", "Constant", CompletionType.KEYWORD),
+        AutocompleteItem("static", "Static member", CompletionType.KEYWORD),
+        AutocompleteItem("virtual", "Virtual function", CompletionType.KEYWORD),
+        AutocompleteItem("override", "Override virtual", CompletionType.KEYWORD),
+        AutocompleteItem("return", "Return statement", CompletionType.KEYWORD),
+        AutocompleteItem("if", "If statement", CompletionType.KEYWORD),
+        AutocompleteItem("else", "Else clause", CompletionType.KEYWORD),
+        AutocompleteItem("for", "For loop", CompletionType.KEYWORD),
+        AutocompleteItem("while", "While loop", CompletionType.KEYWORD),
+        AutocompleteItem("do", "Do-while loop", CompletionType.KEYWORD),
+        AutocompleteItem("switch", "Switch statement", CompletionType.KEYWORD),
+        AutocompleteItem("nullptr", "Null pointer", CompletionType.KEYWORD),
+        AutocompleteItem("true", "Boolean true", CompletionType.KEYWORD),
+        AutocompleteItem("false", "Boolean false", CompletionType.KEYWORD),
+        AutocompleteItem("delete", "Delete pointer", CompletionType.KEYWORD),
+        AutocompleteItem("new", "Allocate memory", CompletionType.KEYWORD),
+        AutocompleteItem("auto", "Automatic type deduction", CompletionType.KEYWORD),
+        AutocompleteItem("template", "Template declaration", CompletionType.KEYWORD),
+        AutocompleteItem("sort", "std::sort(begin, end)", CompletionType.FUNCTION),
+        AutocompleteItem("printf", "printf(format, ...) — C output", CompletionType.FUNCTION),
+        AutocompleteItem("scanf", "scanf(format, ...) — C input", CompletionType.FUNCTION),
+        AutocompleteItem("push_back", ".push_back(item) — Add to vector", CompletionType.METHOD),
+        AutocompleteItem("pop_back", ".pop_back() — Remove last", CompletionType.METHOD),
+        AutocompleteItem("size", ".size() — Container size", CompletionType.METHOD),
+        AutocompleteItem("begin", ".begin() — Start iterator", CompletionType.METHOD),
+        AutocompleteItem("end", ".end() — End iterator", CompletionType.METHOD)
+    )
+
+    // ─── Kotlin ──────────────────────────────────────────────────────────────
+    private val kotlinCompletions = listOf(
+        AutocompleteItem("fun", "Function declaration", CompletionType.KEYWORD),
+        AutocompleteItem("val", "Read-only variable", CompletionType.KEYWORD),
+        AutocompleteItem("var", "Mutable variable", CompletionType.KEYWORD),
+        AutocompleteItem("class", "Class declaration", CompletionType.KEYWORD),
+        AutocompleteItem("data", "Data class", CompletionType.KEYWORD),
+        AutocompleteItem("object", "Object/singleton", CompletionType.KEYWORD),
+        AutocompleteItem("companion", "Companion object", CompletionType.KEYWORD),
+        AutocompleteItem("interface", "Interface declaration", CompletionType.KEYWORD),
+        AutocompleteItem("sealed", "Sealed class", CompletionType.KEYWORD),
+        AutocompleteItem("enum", "Enum class", CompletionType.KEYWORD),
+        AutocompleteItem("abstract", "Abstract class/function", CompletionType.KEYWORD),
+        AutocompleteItem("open", "Open class (inheritable)", CompletionType.KEYWORD),
+        AutocompleteItem("override", "Override function", CompletionType.KEYWORD),
+        AutocompleteItem("suspend", "Suspending function", CompletionType.KEYWORD),
+        AutocompleteItem("return", "Return statement", CompletionType.KEYWORD),
+        AutocompleteItem("if", "If expression", CompletionType.KEYWORD),
+        AutocompleteItem("else", "Else branch", CompletionType.KEYWORD),
+        AutocompleteItem("when", "When expression", CompletionType.KEYWORD),
+        AutocompleteItem("for", "For loop", CompletionType.KEYWORD),
+        AutocompleteItem("while", "While loop", CompletionType.KEYWORD),
+        AutocompleteItem("do", "Do-while loop", CompletionType.KEYWORD),
+        AutocompleteItem("try", "Try expression", CompletionType.KEYWORD),
+        AutocompleteItem("catch", "Catch block", CompletionType.KEYWORD),
+        AutocompleteItem("finally", "Finally block", CompletionType.KEYWORD),
+        AutocompleteItem("throw", "Throw exception", CompletionType.KEYWORD),
+        AutocompleteItem("null", "Null value", CompletionType.KEYWORD),
+        AutocompleteItem("true", "Boolean true", CompletionType.KEYWORD),
+        AutocompleteItem("false", "Boolean false", CompletionType.KEYWORD),
+        AutocompleteItem("is", "Type check", CompletionType.KEYWORD),
+        AutocompleteItem("as", "Type cast", CompletionType.KEYWORD),
+        AutocompleteItem("in", "Range/containment check", CompletionType.KEYWORD),
+        AutocompleteItem("!in", "Not in range", CompletionType.KEYWORD),
+        AutocompleteItem("let", ".let { } — Safe scope function", CompletionType.FUNCTION),
+        AutocompleteItem("apply", ".apply { } — Configure object", CompletionType.FUNCTION),
+        AutocompleteItem("run", ".run { } — Execute and return", CompletionType.FUNCTION),
+        AutocompleteItem("also", ".also { } — Perform side effect", CompletionType.FUNCTION),
+        AutocompleteItem("with", "with(obj) { } — Access members", CompletionType.FUNCTION),
+        AutocompleteItem("println", "println(value) — Print with newline", CompletionType.FUNCTION),
+        AutocompleteItem("print", "print(value) — Print", CompletionType.FUNCTION),
+        AutocompleteItem("readLine", "readLine() — Read input", CompletionType.FUNCTION),
+        AutocompleteItem("listOf", "listOf(items) — Create immutable list", CompletionType.FUNCTION),
+        AutocompleteItem("mutableListOf", "mutableListOf(items)", CompletionType.FUNCTION),
+        AutocompleteItem("mapOf", "mapOf(k to v) — Create map", CompletionType.FUNCTION),
+        AutocompleteItem("mutableMapOf", "mutableMapOf()", CompletionType.FUNCTION),
+        AutocompleteItem("setOf", "setOf(items) — Create set", CompletionType.FUNCTION),
+        AutocompleteItem("emptyList", "emptyList<T>()", CompletionType.FUNCTION),
+        AutocompleteItem("arrayOf", "arrayOf(items)", CompletionType.FUNCTION),
+        AutocompleteItem("String", "String type", CompletionType.CLASS),
+        AutocompleteItem("Int", "Integer type", CompletionType.CLASS),
+        AutocompleteItem("Long", "Long type", CompletionType.CLASS),
+        AutocompleteItem("Double", "Double type", CompletionType.CLASS),
+        AutocompleteItem("Float", "Float type", CompletionType.CLASS),
+        AutocompleteItem("Boolean", "Boolean type", CompletionType.CLASS),
+        AutocompleteItem("Any", "Any type (root)", CompletionType.CLASS),
+        AutocompleteItem("Unit", "Unit (void) type", CompletionType.CLASS),
+        AutocompleteItem("Nothing", "Nothing type", CompletionType.CLASS),
+        AutocompleteItem("List", "Immutable list type", CompletionType.CLASS),
+        AutocompleteItem("Map", "Map type", CompletionType.CLASS),
+        AutocompleteItem("Set", "Set type", CompletionType.CLASS),
+        AutocompleteItem("forEach", ".forEach { } — Iterate", CompletionType.METHOD),
+        AutocompleteItem("map", ".map { } — Transform", CompletionType.METHOD),
+        AutocompleteItem("filter", ".filter { } — Filter", CompletionType.METHOD),
+        AutocompleteItem("reduce", ".reduce { acc, it -> } — Fold", CompletionType.METHOD),
+        AutocompleteItem("find", ".find { } — Find first match", CompletionType.METHOD),
+        AutocompleteItem("any", ".any { } — Any match", CompletionType.METHOD),
+        AutocompleteItem("all", ".all { } — All match", CompletionType.METHOD),
+        AutocompleteItem("count", ".count { } — Count matches", CompletionType.METHOD),
+        AutocompleteItem("groupBy", ".groupBy { } — Group elements", CompletionType.METHOD),
+        AutocompleteItem("sortedBy", ".sortedBy { } — Sort by key", CompletionType.METHOD),
+        AutocompleteItem("firstOrNull", ".firstOrNull { } — First or null", CompletionType.METHOD),
+        AutocompleteItem("takeIf", ".takeIf { condition } — Conditional take", CompletionType.METHOD),
+        AutocompleteItem("orElse", "?: orElse — Elvis operator default", CompletionType.SNIPPET)
+    )
+}

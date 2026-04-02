@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://github.com/Rosemoe/sora-editor",
+    "name": "Rosemoe/sora-editor: A multifunctional Android code editor library",
+    "snippet": "Incremental syntax highlight · Auto-completion (with code snippets) · Auto indent · Code block lines · Scale text · Undo/redo · Search and replace · Auto ... Missing: smooth virtual rendering",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://project-sora.github.io/sora-editor-docs",
+    "name": "Sora Editor | High-Performance Android Code Editor",
+    "snippet": "Sora Editor. High-Performance Android Code Editor. Powerful, optimized and pluggable. Here's what you need for your code viewing and editing apps. Get Started. Missing: scrolling virtual",
+    "host_name": "project-sora.github.io",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://central.sonatype.com/artifact/io.github.Rosemoe.sora-editor/editor/0.21.0",
+    "name": "io.github.Rosemoe.sora-editor:editor:0.21.0 - Maven Central",
+    "snippet": "Sonatype Guide gives AI coding assistants the context they've been missing, so developers can move fast without creating rework. Guide combines real-time open ... Missing: optimization smooth scrolling virtual rendering",
+    "host_name": "central.sonatype.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://mvnrepository.com/artifact/io.github.Rosemoe.sora-editor/editor",
+    "name": "io.github.Rosemoe.sora-editor - Maven Repository",
+    "snippet": "Editor. An awesome code editor library on Android. Overview Versions (70) Used By BOMs (1) Badges Books (44). LicenseLGPL 2.1. CategoriesAndroid Packages. Tags ... Missing: optimization smooth scrolling virtual rendering",
+    "host_name": "mvnrepository.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/Rosemoe/CodeEditor/releases",
+    "name": "Releases · Rosemoe/sora-editor - GitHub",
+    "snippet": "Rosemoe/sora-editor. Missing: virtual | Show results with: virtual",
+    "host_name": "github.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://jarcasting.com/artifacts/io.github.Rosemoe.sora-editor/editor-kt/0.9.3",
+    "name": "io.github.Rosemoe.sora-editor » editor-kt » 0.9.3 - JarCasting",
+    "snippet": "Download package files of io.github.Rosemoe.sora-editor » editor-kt » 0.9.3 and jars with java source files. Missing: optimization smooth scrolling virtual rendering",
+    "host_name": "jarcasting.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://project-sora.github.io/sora-editor-docs/guide/getting-started",
+    "name": "Getting Started | Sora Editor - GitHub Pages",
+    "snippet": "sora-editor is a cool and optimized code editor on Android platform. Missing: smooth scrolling virtual rendering",
+    "host_name": "project-sora.github.io",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://blog.rosemoe.cyou/2021/08/22/editor-get-started/index.html",
+    "name": "Sora-editor - Get started | Rosemoe的小博客",
+    "snippet": "Sora-editor is a optimized editor library with a lot of features on Android. It aims at making more people able to develop their own IDEs with less efforts. Missing: smooth scrolling virtual rendering",
+    "host_name": "blog.rosemoe.cyou",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.repoportal.com/en/rosemoe-sora-editor",
+    "name": "Rosemoe/sora-editor - Java project - REPOPORTAL",
+    "snippet": "Rosemoe/sora-editor - Java project: A multifunctional Android code editor ... sora-editor is a cool and optimized code editor on Android platform. Missing: smooth rendering",
+    "host_name": "www.repoportal.com",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://mvnrepository.com/artifact/io.github.Rosemoe.sora-editor/editor/0.23.0",
+    "name": "io.github.Rosemoe.sora-editor » editor » 0.23.0 - Maven Repository",
+    "snippet": "Editor » 0.23.0. An awesome code editor library on Android. Overview Dependencies (3) Changes (3) Books (44). LicenseLGPL 2.1. CategoriesAndroid Packages. Tags ... Missing: optimization smooth scrolling virtual rendering",
+    "host_name": "mvnrepository.com",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]
