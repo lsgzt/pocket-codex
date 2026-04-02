@@ -684,10 +684,7 @@ fun NewProjectDialog(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium
                     ) {
-                        LanguageIconBadge(
-                            language = selectedLanguage,
-                            isHovered = false
-                        )
+                        SimpleLanguageIcon(language = selectedLanguage)
                         Spacer(Modifier.width(12.dp))
                         Text(
                             selectedLanguage.displayName,

@@ -4,8 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import androidx.compose.animation.core.FiniteAnimationSpec
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -148,12 +147,13 @@ fun rememberAnimationComplexity(): DevicePerformance.AnimationComplexity {
  * Get elevation animation spec for current tier
  */
 @Composable
+@ReadOnlyComposable
 fun rememberElevationSpec(tier: DevicePerformance.Tier = rememberPerformanceTier()): FiniteAnimationSpec<Dp> {
-    val duration = DevicePerformance.getAnimationDurationMultiplier(tier)
-    return remember(duration) {
+    val multiplier = DevicePerformance.getAnimationDurationMultiplier(tier)
+    return remember(multiplier) {
         tween(
-            durationMillis = (200 * duration).toInt(),
-            easing = androidx.compose.animation.core.FastOutSlowInEasing
+            durationMillis = (200 * multiplier).toInt(),
+            easing = FastOutSlowInEasing
         )
     }
 }
@@ -162,6 +162,7 @@ fun rememberElevationSpec(tier: DevicePerformance.Tier = rememberPerformanceTier
  * Performance-aware animation duration
  */
 @Composable
+@ReadOnlyComposable
 fun rememberOptimalDuration(baseDuration: Int): Int {
     val tier = rememberPerformanceTier()
     val multiplier = DevicePerformance.getAnimationDurationMultiplier(tier)
@@ -172,6 +173,7 @@ fun rememberOptimalDuration(baseDuration: Int): Int {
  * Check if complex effects should be shown
  */
 @Composable
+@ReadOnlyComposable
 fun rememberEnableComplexEffects(): Boolean {
     val tier = rememberPerformanceTier()
     return remember(tier) { DevicePerformance.shouldEnableComplexEffects(tier) }
