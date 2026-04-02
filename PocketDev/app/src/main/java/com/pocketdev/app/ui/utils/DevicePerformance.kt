@@ -7,7 +7,6 @@ import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -46,11 +45,7 @@ object DevicePerformance {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         
         // Check memory
-        val totalMem = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            activityManager.memoryClass // MB
-        } else {
-            activityManager.memoryClass
-        }
+        val totalMem = activityManager.memoryClass
 
         // Check CPU cores
         val cpuCores = Runtime.getRuntime().availableProcessors()
@@ -114,20 +109,12 @@ object DevicePerformance {
             Tier.HIGH -> 6
         }
     }
-
-    /**
-     * Check if hardware acceleration should be forced
-     */
-    fun shouldForceHardwareAcceleration(tier: Tier): Boolean {
-        return tier != Tier.LOW
-    }
 }
 
 /**
  * Composable to remember performance tier
  */
 @Composable
-@ReadOnlyComposable
 fun rememberPerformanceTier(): DevicePerformance.Tier {
     val context = LocalContext.current
     return remember { DevicePerformance.getPerformanceTier(context) }
@@ -137,7 +124,6 @@ fun rememberPerformanceTier(): DevicePerformance.Tier {
  * Composable to remember animation complexity
  */
 @Composable
-@ReadOnlyComposable
 fun rememberAnimationComplexity(): DevicePerformance.AnimationComplexity {
     val tier = rememberPerformanceTier()
     return remember(tier) { DevicePerformance.getAnimationComplexity(tier) }
@@ -147,7 +133,6 @@ fun rememberAnimationComplexity(): DevicePerformance.AnimationComplexity {
  * Get elevation animation spec for current tier
  */
 @Composable
-@ReadOnlyComposable
 fun rememberElevationSpec(tier: DevicePerformance.Tier = rememberPerformanceTier()): FiniteAnimationSpec<Dp> {
     val multiplier = DevicePerformance.getAnimationDurationMultiplier(tier)
     return remember(multiplier) {
@@ -162,7 +147,6 @@ fun rememberElevationSpec(tier: DevicePerformance.Tier = rememberPerformanceTier
  * Performance-aware animation duration
  */
 @Composable
-@ReadOnlyComposable
 fun rememberOptimalDuration(baseDuration: Int): Int {
     val tier = rememberPerformanceTier()
     val multiplier = DevicePerformance.getAnimationDurationMultiplier(tier)
@@ -173,7 +157,6 @@ fun rememberOptimalDuration(baseDuration: Int): Int {
  * Check if complex effects should be shown
  */
 @Composable
-@ReadOnlyComposable
 fun rememberEnableComplexEffects(): Boolean {
     val tier = rememberPerformanceTier()
     return remember(tier) { DevicePerformance.shouldEnableComplexEffects(tier) }
