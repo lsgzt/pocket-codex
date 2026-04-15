@@ -53,6 +53,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import com.pocketdev.app.ui.components.MarkdownText
 import com.pocketdev.app.ui.components.DiffViewer
+import com.pocketdev.app.ui.components.EditorCoreView
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -973,78 +974,243 @@ private fun EditorCodePane(
     val language by viewModel.currentLanguage.collectAsStateWithLifecycle()
     val fontSize by settingsViewModel.fontSize.collectAsStateWithLifecycle()
     val lineNumbers by settingsViewModel.lineNumbers.collectAsStateWithLifecycle()
-    val tabSize by settingsViewModel.tabSize.collectAsStateWithLifecycle()
-    val autocompleteEnabled by settingsViewModel.autocomplete.collectAsStateWithLifecycle()
     val wordWrap by settingsViewModel.wordWrap.collectAsStateWithLifecycle()
+    val autocompleteEnabled by settingsViewModel.autocomplete.collectAsStateWithLifecycle()
     val ghostSuggestion by viewModel.ghostSuggestion.collectAsStateWithLifecycle()
     val inlineDiffSuggestion by viewModel.inlineDiffSuggestion.collectAsStateWithLifecycle()
 
+    var cursorAnchor by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var suggestions by remember { mutableStateOf<List<AutocompleteItem>>(emptyList()) }
+    var showAutocomplete by remember { mutableStateOf(false) }
+
     val selection = selectionState.value
-    val latestSelection = rememberUpdatedState(selection)
+    val isLargeFile = remember(code) {
+        val lineCount = code.count { it == '\n' } + 1
+        code.length > 12_000 || lineCount > 1000
+    }
+
+    LaunchedEffect(isLargeFile) {
+        if (isLargeFile) {
+            viewModel.clearGhostSuggestion()
+            suggestions = emptyList()
+            showAutocomplete = false
+        }
+    }
+
+    LaunchedEffect(code, selection.start, language, autocompleteEnabled, isLargeFile) {
+        if (!autocompleteEnabled || isLargeFile) {
+            suggestions = emptyList()
+            showAutocomplete = false
+            return@LaunchedEffect
+        }
+
+        val cursor = selection.start.coerceIn(0, code.length)
+        val prefix = getWordPrefixForCompletion(code, cursor)
+        if (prefix.length < 2) {
+            suggestions = emptyList()
+            showAutocomplete = false
+            return@LaunchedEffect
+        }
+
+        delay(120)
+        val currentCursor = selectionState.value.start.coerceIn(0, viewModel.currentCode.value.length)
+        if (currentCursor != cursor || code != viewModel.currentCode.value) {
+            return@LaunchedEffect
+        }
+
+        val newSuggestions = withContext(Dispatchers.Default) {
+            AutocompleteEngine.getSuggestions(code, cursor, language)
+        }
+        suggestions = newSuggestions
+        showAutocomplete = newSuggestions.isNotEmpty()
+    }
+
     val onCodeChange = remember(viewModel) { { newCode: String -> viewModel.updateCode(newCode) } }
-    val onRejectGhostSuggestion = remember(viewModel) { { viewModel.rejectGhostSuggestion() } }
-    val onSelectionChangedInternal = remember(viewModel, selectionState) {
-        { newSelection: androidx.compose.ui.text.TextRange ->
-            selectionState.value = newSelection
-            if (viewModel.ghostSuggestion.value != null || viewModel.inlineDiffSuggestion.value != null) {
-                viewModel.rejectGhostSuggestion()
+    val onCursorChange = remember(viewModel, selectionState, isLargeFile) {
+        { cursorIndex: Int ->
+            selectionState.value = androidx.compose.ui.text.TextRange(cursorIndex)
+            if (!isLargeFile) {
+                if (viewModel.ghostSuggestion.value != null || viewModel.inlineDiffSuggestion.value != null) {
+                    viewModel.rejectGhostSuggestion()
+                }
+                viewModel.requestGhostSuggestion(cursorIndex)
             }
-            viewModel.requestGhostSuggestion(newSelection.start)
         }
     }
-    val onAcceptGhostSuggestionLine = remember(viewModel, selectionState) {
-        {
-            val cursor = latestSelection.value.start
-            val length = viewModel.acceptGhostSuggestionLine(cursor)
-            selectionState.value = androidx.compose.ui.text.TextRange(cursor + length)
-        }
-    }
-    val onAcceptGhostSuggestionFull = remember(viewModel, selectionState) {
-        {
-            val cursor = latestSelection.value.start
-            val suggestionLength = viewModel.ghostSuggestion.value?.length ?: 0
-            if (suggestionLength > 0) {
+    val onGhostAccepted = remember(viewModel, selectionState) {
+        { suggestion: String ->
+            val cursor = selectionState.value.start
+            if (suggestion.isNotEmpty()) {
                 viewModel.acceptGhostSuggestion(cursor)
-                selectionState.value = androidx.compose.ui.text.TextRange(cursor + suggestionLength)
+                selectionState.value = androidx.compose.ui.text.TextRange(cursor + suggestion.length)
             }
         }
     }
-    val onAcceptInlineDiff = remember(viewModel, selectionState) {
-        {
-            val suggestion = viewModel.inlineDiffSuggestion.value
-            val length = viewModel.acceptInlineDiffSuggestion()
-            if (length > 0) {
-                val addText = suggestion?.addText
-                if (addText != null) {
-                    val newSelection = viewModel.currentCode.value.indexOf(addText)
-                    if (newSelection >= 0) {
-                        selectionState.value = androidx.compose.ui.text.TextRange(newSelection + length)
+
+    Box(modifier = modifier) {
+        EditorCoreView(
+            code = code,
+            language = language,
+            fontSize = fontSize,
+            isDark = true,
+            ghostSuggestion = if (isLargeFile) null else ghostSuggestion,
+            onCodeChange = onCodeChange,
+            onCursorChange = onCursorChange,
+            onCursorPositionChange = { x, y ->
+                cursorAnchor = androidx.compose.ui.geometry.Offset(x, y)
+            },
+            selectionOffset = selectionState.value.start,
+            onGhostAccepted = onGhostAccepted,
+            lineNumbers = lineNumbers,
+            wordWrap = if (isLargeFile) false else wordWrap,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        if (!isLargeFile && showAutocomplete && suggestions.isNotEmpty()) {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = androidx.compose.ui.unit.IntOffset(
+                    x = cursorAnchor.x.toInt().coerceAtLeast(0) + 24,
+                    y = cursorAnchor.y.toInt().coerceAtLeast(0) + 28
+                ),
+                properties = PopupProperties(focusable = false)
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(min = 200.dp, max = 320.dp)
+                        .heightIn(max = 220.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    tonalElevation = 6.dp,
+                    shadowElevation = 10.dp,
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        suggestions.take(8).forEach { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val currentCode = viewModel.currentCode.value
+                                        val cursor = selectionState.value.start.coerceIn(0, currentCode.length)
+                                        val prefix = getWordPrefixForCompletion(currentCode, cursor)
+                                        val replaceStart = (cursor - prefix.length).coerceAtLeast(0)
+                                        val newCode = currentCode.substring(0, replaceStart) + item.insertText + currentCode.substring(cursor)
+                                        val newCursor = (replaceStart + item.insertText.length + item.cursorOffset)
+                                            .coerceIn(0, newCode.length)
+
+                                        viewModel.updateCode(newCode)
+                                        selectionState.value = androidx.compose.ui.text.TextRange(newCursor)
+                                        showAutocomplete = false
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = item.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = item.type.name.lowercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
-    CodeEditor(
-        code = code,
-        language = language,
-        fontSize = fontSize,
-        lineNumbers = lineNumbers,
-        tabSize = tabSize,
-        wordWrap = wordWrap,
-        autocompleteEnabled = autocompleteEnabled,
-        ghostSuggestion = ghostSuggestion,
-        inlineDiffSuggestion = inlineDiffSuggestion,
-        onCodeChange = onCodeChange,
-        selection = selection,
-        onSelectionChange = onSelectionChangedInternal,
-        onRejectGhostSuggestion = onRejectGhostSuggestion,
-        onAcceptGhostSuggestionLine = onAcceptGhostSuggestionLine,
-        onAcceptGhostSuggestionFull = onAcceptGhostSuggestionFull,
-        onAcceptInlineDiff = onAcceptInlineDiff,
-        modifier = modifier
-    )
+        if (!isLargeFile && !ghostSuggestion.isNullOrBlank()) {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = androidx.compose.ui.unit.IntOffset(
+                    x = cursorAnchor.x.toInt().coerceAtLeast(0) + 24,
+                    y = cursorAnchor.y.toInt().coerceAtLeast(0) - 8
+                ),
+                properties = PopupProperties(focusable = false)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    tonalElevation = 3.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = ghostSuggestion.lines().firstOrNull().orEmpty().take(56),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                val cursor = selectionState.value.start
+                                val suggestionLength = viewModel.ghostSuggestion.value?.length ?: 0
+                                if (suggestionLength > 0) {
+                                    viewModel.acceptGhostSuggestion(cursor)
+                                    selectionState.value = androidx.compose.ui.text.TextRange(cursor + suggestionLength)
+                                }
+                            }
+                        ) {
+                            Text("Accept")
+                        }
+                        TextButton(onClick = { viewModel.rejectGhostSuggestion() }) {
+                            Text("Dismiss")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!isLargeFile && inlineDiffSuggestion != null) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "AI inline edit",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(
+                    onClick = {
+                        val suggestion = viewModel.inlineDiffSuggestion.value
+                        val length = viewModel.acceptInlineDiffSuggestion()
+                        if (length > 0) {
+                            val addText = suggestion?.addText
+                            if (addText != null) {
+                                val idx = viewModel.currentCode.value.indexOf(addText)
+                                if (idx >= 0) {
+                                    selectionState.value = androidx.compose.ui.text.TextRange(idx + length)
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Apply")
+                }
+                TextButton(onClick = { viewModel.rejectGhostSuggestion() }) {
+                    Text("Dismiss")
+                }
+            }
+        }
+    }
 }
+
 @Composable
 private fun EditorTerminalSection(
     viewModel: EditorViewModel,

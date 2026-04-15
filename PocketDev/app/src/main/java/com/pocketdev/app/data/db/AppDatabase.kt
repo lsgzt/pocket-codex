@@ -5,9 +5,12 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-import com.pocketdev.app.data.models.Project
 
-@Database(entities = [Project::class], version = 2, exportSchema = false)
+@Database(
+    entities = [ProjectEntity::class, ProjectFileEntity::class],
+    version = 3,
+    exportSchema = false
+)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 

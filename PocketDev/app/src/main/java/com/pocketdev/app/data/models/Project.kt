@@ -1,8 +1,6 @@
 package com.pocketdev.app.data.models
 
 import androidx.compose.runtime.Immutable
-import androidx.room.Entity
-import androidx.room.PrimaryKey
 import java.util.UUID
 
 @Immutable
@@ -11,6 +9,18 @@ data class ProjectFile(
     val name: String,
     val language: Language,
     val code: String
+)
+
+@Immutable
+data class ProjectSummary(
+    val id: Long,
+    val name: String,
+    val language: Language,
+    val createdAt: Long,
+    val modifiedAt: Long,
+    val description: String = "",
+    val fileCount: Int = 0,
+    val totalChars: Long = 0L
 )
 
 enum class Language(val displayName: String, val extension: String, val icon: String) {
@@ -38,14 +48,12 @@ enum class Language(val displayName: String, val extension: String, val icon: St
     }
 }
 
-@Entity(tableName = "projects")
 @Immutable
 data class Project(
-    @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val name: String,
-    val language: Language, // Primary language of the project
-    val code: String = "", // Kept for backward compatibility, but we use files now
+    val language: Language,
+    val code: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val modifiedAt: Long = System.currentTimeMillis(),
     val description: String = "",

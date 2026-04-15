@@ -102,23 +102,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var autoSaveJob: Job? = null
     private var hasUnsavedChanges = false
 
-    // All projects
-    val allProjects: StateFlow<List<Project>> = projectRepository.getAllProjects()
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    val filteredProjects: StateFlow<List<Project>> = combine(
-        allProjects,
-        searchQuery
-    ) { projects, query ->
-        if (query.isBlank()) projects
-        else projects.filter {
-            it.name.contains(query, ignoreCase = true) ||
-                    it.language.displayName.contains(query, ignoreCase = true)
+    // Projects list now uses SQL-backed search/summaries.
+    val allProjects: StateFlow<List<Project>> = projectRepository.getAllProjects()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val filteredProjects: StateFlow<List<Project>> = _searchQuery
+        .debounce(180)
+        .distinctUntilChanged()
+        .flatMapLatest { query ->
+            if (query.isBlank()) projectRepository.getAllProjects()
+            else projectRepository.searchProjects(query.trim())
         }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     init {
         viewModelScope.launch {
@@ -129,7 +127,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (lastProjectId != -1L) {
                 val project = projectRepository.getProjectById(lastProjectId)
                 if (project != null) {
-                    loadProject(project)
+                    applyLoadedProject(project)
                     if (unsavedCode != null) {
                         _currentCode.value = unsavedCode
                         hasUnsavedChanges = true
@@ -185,13 +183,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(2000)
-            prefsManager.setUnsavedCode(code)
+            delay(2000)
+            val projectId = _currentProjectId.value
+            if (projectId == null) {
+                prefsManager.setUnsavedCode(code)
+            } else {
+                prefsManager.setUnsavedCode(null)
+                val files = _currentFiles.value
+                val activeIndex = _activeFileIndex.value
+                if (activeIndex in files.indices) {
+                    runCatching {
+                        projectRepository.updateFileContent(
+                            projectId = projectId,
+                            fileExternalId = files[activeIndex].id,
+                            code = code,
+                            language = _currentLanguage.value
+                        )
+                    }
+                }
+            }
         }
     }
 
     fun switchFile(index: Int) {
         if (index in _currentFiles.value.indices) {
+            syncCurrentCodeToActiveFile()
             _activeFileIndex.value = index
             val file = _currentFiles.value[index]
             _currentCode.value = file.code
@@ -219,25 +235,38 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _searchQuery.value = query
     }
 
-    fun loadProject(project: Project) {
-        _currentFiles.value = project.files
-        if (project.files.isNotEmpty()) {
-            _activeFileIndex.value = 0
-            _currentCode.value = project.files[0].code
-            _currentLanguage.value = project.files[0].language
+    private fun applyLoadedProject(project: Project) {
+        _currentFiles.value = if (project.files.isEmpty()) {
+            val fallbackCode = if (project.code.isNotBlank()) project.code else getDefaultCode(project.language)
+            listOf(ProjectFile(name = "main${project.language.extension}", language = project.language, code = fallbackCode))
         } else {
-            _currentCode.value = project.code
-            _currentLanguage.value = project.language
+            project.files
         }
+
+        _activeFileIndex.value = 0
+        _currentCode.value = _currentFiles.value.first().code
+        _currentLanguage.value = _currentFiles.value.first().language
         _currentProjectId.value = project.id
         _currentProjectName.value = project.name
         _executionState.value = UiState.Idle
         _htmlContent.value = null
         hasUnsavedChanges = false
+
         viewModelScope.launch {
             prefsManager.setLastProjectId(project.id)
             prefsManager.setUnsavedCode(null)
             prefsManager.setUnsavedLanguage(null)
+        }
+    }
+
+    fun loadProject(project: Project) {
+        viewModelScope.launch {
+            val hydrated = if (project.files.isEmpty() && project.id != 0L) {
+                projectRepository.getProjectById(project.id) ?: project
+            } else {
+                project
+            }
+            applyLoadedProject(hydrated)
         }
     }
 
@@ -355,6 +384,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 val projectName = name ?: _currentProjectName.value
                 val existingId = _currentProjectId.value
 
+                syncCurrentCodeToActiveFile()
                 val project = Project(
                     id = existingId ?: 0,
                     name = projectName,
@@ -819,8 +849,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun applyAiCode(code: String) {
-        _currentCode.value = code
-        hasUnsavedChanges = true
+        updateCode(code)
         _aiState.value = UiState.Idle
     }
 
@@ -842,6 +871,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+
+    private fun syncCurrentCodeToActiveFile() {
+        val files = _currentFiles.value
+        val activeIndex = _activeFileIndex.value
+        if (activeIndex !in files.indices) return
+
+        val current = files[activeIndex]
+        val code = _currentCode.value
+        if (current.code == code && current.language == _currentLanguage.value) return
+
+        val updated = files.toMutableList()
+        updated[activeIndex] = current.copy(code = code, language = _currentLanguage.value)
+        _currentFiles.value = updated
     }
 
     private fun getDefaultCode(language: Language): String {

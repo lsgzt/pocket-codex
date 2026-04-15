@@ -5,7 +5,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -23,12 +22,9 @@ import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
 import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
 import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
 import io.github.rosemoe.sora.widget.CodeEditor
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.withContext
 
 private fun lineColumnToOffset(text: CharSequence, line: Int, column: Int): Int {
     if (line <= 0) return column.coerceIn(0, text.length)
@@ -55,6 +51,25 @@ private fun getCursorIndex(pos: Any, text: CharSequence): Int {
     }.getOrDefault(0)
 }
 
+
+private fun getCursorLine(pos: Any): Int {
+    return runCatching {
+        pos.javaClass.getMethod("getLine").invoke(pos) as? Int ?: 0
+    }.recoverCatching {
+        pos.javaClass.getDeclaredField("line").also { it.isAccessible = true }
+            .get(pos) as? Int ?: 0
+    }.getOrDefault(0).coerceAtLeast(0)
+}
+
+private fun getCursorColumn(pos: Any): Int {
+    return runCatching {
+        pos.javaClass.getMethod("getColumn").invoke(pos) as? Int ?: 0
+    }.recoverCatching {
+        pos.javaClass.getDeclaredField("column").also { it.isAccessible = true }
+            .get(pos) as? Int ?: 0
+    }.getOrDefault(0).coerceAtLeast(0)
+}
+
 /**
  * Memory-efficient cursor position tracking with debounced updates.
  * Reduces unnecessary recompositions during rapid cursor movement.
@@ -78,23 +93,6 @@ private class CursorTracker {
     fun getPosition(): Int = lastCursorPosition
 }
 
-/**
- * Syntax highlighting cache with LRU eviction for memory efficiency.
- */
-@Stable
-private class SyntaxHighlightCache(private val maxSize: Int = 10) {
-    private val cache = LinkedHashMap<String, TextMateColorScheme>(maxSize, 0.75f, true)
-    
-    fun get(themeName: String): TextMateColorScheme? = cache[themeName]
-    
-    fun put(themeName: String, scheme: TextMateColorScheme) {
-        if (cache.size >= maxSize) {
-            val firstKey = cache.keys.first()
-            cache.remove(firstKey)
-        }
-        cache[themeName] = scheme
-    }
-}
 
 @OptIn(FlowPreview::class)
 @Composable
@@ -123,12 +121,12 @@ fun EditorCoreView(
     val textSizePx = with(density) { fontSize.sp.toPx() }
 
     val editorRef = remember { mutableStateOf<CodeEditor?>(null) }
+    var currentCursorLine by remember { mutableStateOf(0) }
+    var currentCursorColumn by remember { mutableStateOf(0) }
     
     // Memory-efficient cursor tracking
     val cursorTracker = remember { CursorTracker() }
     
-    // Shared syntax highlighting cache
-    val syntaxCache = remember { SyntaxHighlightCache() }
 
     // Cache the color scheme — recreate only when theme changes (stable key)
     val cachedColorScheme = remember("darcula") {
@@ -139,8 +137,6 @@ fun EditorCoreView(
         }.getOrNull()
     }
 
-    // Debounced code change emitter
-    var lastEmittedCode by remember { mutableStateOf(code) }
     
     AndroidView(
         modifier = modifier,
@@ -172,7 +168,6 @@ fun EditorCoreView(
                                 val newText = editor.text.toString()
                                 // Immediate update for small changes, debounce handled by caller
                                 latestOnCodeChange(newText)
-                                lastEmittedCode = newText
                             }
                         }
                     }
@@ -181,17 +176,22 @@ fun EditorCoreView(
                     runCatching {
                         editor.subscribeEvent(SelectionChangeEvent::class.java) { event, _ ->
                             val cursorIdx = getCursorIndex(event.left, editor.text)
-                            
-                            // Only emit if position actually changed
+                            val line = getCursorLine(event.left)
+                            val column = getCursorColumn(event.left)
+                            currentCursorLine = line
+                            currentCursorColumn = column
+
                             if (cursorTracker.updatePosition(cursorIdx)) {
                                 latestOnCursorChange(cursorIdx)
-                                
-                                // Approximate pixel position
-                                runCatching {
-                                    val rowHeight = editor.javaClass.getMethod("getRowHeight")
-                                        .invoke(editor) as? Float ?: 40f
-                                    latestOnCursorPositionChange(0f, cursorIdx * rowHeight)
-                                }
+                            }
+
+                            runCatching {
+                                val rowHeight = editor.javaClass.getMethod("getRowHeight")
+                                    .invoke(editor) as? Float ?: 40f
+                                val charWidth = textSizePx * 0.62f
+                                val x = (column * charWidth) - editor.scroller.currX
+                                val y = (line * rowHeight) - editor.scroller.currY
+                                latestOnCursorPositionChange(x.coerceAtLeast(0f), y.coerceAtLeast(0f))
                             }
                         }
                     }
@@ -267,19 +267,22 @@ fun EditorCoreView(
     )
 
     // Smooth scroll tracking
-    LaunchedEffect(editorRef.value) {
+    LaunchedEffect(editorRef.value, textSizePx) {
         val editor = editorRef.value ?: return@LaunchedEffect
-        // Track scroll position for UI updates
-        snapshotFlow { 
-            Pair(
-                editor.scroller.currX,
-                editor.scroller.currY
-            )
+        snapshotFlow {
+            Pair(editor.scroller.currX, editor.scroller.currY)
         }
-            .debounce(16) // ~60fps
+            .debounce(16)
             .distinctUntilChanged()
-            .collect { (scrollX, scrollY) ->
-                // Update any scroll-dependent UI
+            .collect {
+                runCatching {
+                    val rowHeight = editor.javaClass.getMethod("getRowHeight")
+                        .invoke(editor) as? Float ?: 40f
+                    val charWidth = textSizePx * 0.62f
+                    val x = (currentCursorColumn * charWidth) - editor.scroller.currX
+                    val y = (currentCursorLine * rowHeight) - editor.scroller.currY
+                    latestOnCursorPositionChange(x.coerceAtLeast(0f), y.coerceAtLeast(0f))
+                }
             }
     }
 
