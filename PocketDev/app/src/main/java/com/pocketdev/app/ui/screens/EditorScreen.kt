@@ -1124,7 +1124,8 @@ private fun EditorCodePane(
             }
         }
 
-        if (!isLargeFile && !ghostSuggestion.isNullOrBlank()) {
+        val currentGhostSuggestion = ghostSuggestion
+        if (!isLargeFile && !currentGhostSuggestion.isNullOrBlank()) {
             Popup(
                 alignment = Alignment.TopStart,
                 offset = androidx.compose.ui.unit.IntOffset(
@@ -1143,7 +1144,7 @@ private fun EditorCodePane(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = ghostSuggestion.lines().firstOrNull().orEmpty().take(56),
+                            text = currentGhostSuggestion.lines().firstOrNull().orEmpty().take(56),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
