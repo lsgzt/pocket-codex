@@ -10,6 +10,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -111,6 +114,29 @@ fun EditorCoreView(
     wordWrap: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    // Flag to differentiate between user edits and external code updates
+    var internalUpdate by remember { mutableStateOf(false) }
+    // Memoize language and autocomplete adapter per language to avoid recreation on every recomposition
+    val memoizedLang = remember(language) { TextMateLanguage.create(language.toScopeName(), true) }
+    val memoizedAdapter = remember(language) { SoraAutocompleteAdapter(language) }
+    val memoizedDelegatedLang = remember(language) {
+        val adapter = memoizedAdapter
+        val lang = memoizedLang
+        runCatching { adapter.createDelegatedLanguage(lang) }
+            .getOrNull() ?: lang
+    }
+    // Debounced code change emitter to reduce rapid state updates for large files
+    val coroutineScope = rememberCoroutineScope()
+    val latestOnCodeChangeDebounced = remember {
+        var job: kotlinx.coroutines.Job? = null
+        { newText: String ->
+            job?.cancel()
+            job = coroutineScope.launch {
+                kotlinx.coroutines.delay(100) // 100ms debounce
+                onCodeChange(newText)
+            }
+        }
+    }
     val latestOnCodeChange by rememberUpdatedState(onCodeChange)
     val latestOnCursorChange by rememberUpdatedState(onCursorChange)
     val latestOnCursorPositionChange by rememberUpdatedState(onCursorPositionChange)
@@ -164,10 +190,11 @@ fun EditorCoreView(
                     // Text change listener with debounce for large files
                     runCatching {
                         editor.subscribeEvent(ContentChangeEvent::class.java) { event, _ ->
-                            runCatching { 
+                            if (internalUpdate) return@subscribeEvent
+                            runCatching {
                                 val newText = editor.text.toString()
-                                // Immediate update for small changes, debounce handled by caller
-                                latestOnCodeChange(newText)
+                                // Debounced update to reduce UI churn for large files
+                                latestOnCodeChangeDebounced(newText)
                             }
                         }
                     }
@@ -250,6 +277,8 @@ fun EditorCoreView(
 
             // Sync external code changes
             if (code != editor.text.toString()) {
+                // Prevent triggering the ContentChangeEvent handler while updating programmatically
+                internalUpdate = true
                 val cursorPos = latestSelectionOffset?.coerceIn(0, code.length)
                     ?: getCursorIndex(editor.cursor.left, editor.text)
                 runCatching {
@@ -262,6 +291,7 @@ fun EditorCoreView(
                             }?.invoke(editor, pos)
                         }
                 }
+                internalUpdate = false
             }
         }
     )
