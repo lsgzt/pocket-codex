@@ -18,7 +18,9 @@ data class ProjectEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val modifiedAt: Long = System.currentTimeMillis(),
     val description: String = "",
-    val activeFileExternalId: String? = null
+    val activeFileExternalId: String? = null,
+    val fileCount: Int = 0,
+    val totalChars: Long = 0L
 )
 
 @Entity(
@@ -60,4 +62,14 @@ data class ProjectSummaryRow(
     val description: String,
     val fileCount: Int,
     val totalChars: Long
+)
+
+data class ProjectFileStatsRow(
+    val fileCount: Int,
+    val totalChars: Long
+)
+
+data class ProjectFileRefRow(
+    val externalId: String,
+    val language: Language
 )

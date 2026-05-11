@@ -59,6 +59,8 @@ class ProjectRepository(context: Context) {
     suspend fun saveProject(project: Project): Long {
         val now = System.currentTimeMillis()
         val normalizedFiles = ensureProjectFiles(project)
+        val fileCount = normalizedFiles.size
+        val totalChars = normalizedFiles.sumOf { it.code.length.toLong() }
         return database.withTransaction {
             if (project.id == 0L) {
                 val insertedId = projectDao.insertProject(
@@ -68,7 +70,9 @@ class ProjectRepository(context: Context) {
                         createdAt = now,
                         modifiedAt = now,
                         description = project.description,
-                        activeFileExternalId = normalizedFiles.firstOrNull()?.id
+                        activeFileExternalId = normalizedFiles.firstOrNull()?.id,
+                        fileCount = fileCount,
+                        totalChars = totalChars
                     )
                 )
                 projectDao.insertFiles(
@@ -78,15 +82,18 @@ class ProjectRepository(context: Context) {
                 )
                 insertedId
             } else {
+                val existingProject = projectDao.getProjectEntityById(project.id)
                 projectDao.updateProject(
                     ProjectEntity(
                         id = project.id,
                         name = project.name,
                         primaryLanguage = normalizedFiles.firstOrNull()?.language ?: project.language,
-                        createdAt = project.createdAt,
+                        createdAt = existingProject?.createdAt ?: project.createdAt,
                         modifiedAt = now,
                         description = project.description,
-                        activeFileExternalId = normalizedFiles.firstOrNull()?.id
+                        activeFileExternalId = normalizedFiles.firstOrNull()?.id,
+                        fileCount = fileCount,
+                        totalChars = totalChars
                     )
                 )
                 projectDao.deleteFilesForProject(project.id)
@@ -122,7 +129,7 @@ class ProjectRepository(context: Context) {
             )
 
             if (updated == 0) {
-                val existingCount = projectDao.getProjectFiles(projectId).size
+                val existingCount = projectDao.getProjectFileCount(projectId)
                 projectDao.insertFiles(
                     listOf(
                         ProjectFileEntity(
@@ -140,10 +147,13 @@ class ProjectRepository(context: Context) {
                 )
             }
 
+            val stats = projectDao.getProjectFileStats(projectId)
             projectDao.updateProjectMetadata(
                 projectId = projectId,
                 language = language,
                 activeFileExternalId = normalizedExternalId,
+                fileCount = stats.fileCount,
+                totalChars = stats.totalChars,
                 modifiedAt = now
             )
         }
@@ -151,9 +161,11 @@ class ProjectRepository(context: Context) {
 
     suspend fun updateCode(projectId: Long, code: String) {
         val project = projectDao.getProjectEntityById(projectId) ?: return
-        val files = projectDao.getProjectFiles(projectId)
-        val targetExternalId = files.firstOrNull()?.externalId ?: UUID.randomUUID().toString()
-        updateFileContent(projectId, targetExternalId, code, files.firstOrNull()?.language ?: project.primaryLanguage)
+        val activeFile = project.activeFileExternalId
+            ?.let { projectDao.getProjectFileRef(projectId, it) }
+            ?: projectDao.getFirstProjectFileRef(projectId)
+        val targetExternalId = activeFile?.externalId ?: UUID.randomUUID().toString()
+        updateFileContent(projectId, targetExternalId, code, activeFile?.language ?: project.primaryLanguage)
     }
 
     suspend fun deleteProject(project: Project) {

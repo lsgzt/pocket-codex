@@ -19,11 +19,9 @@ interface ProjectDao {
                p.createdAt,
                p.modifiedAt,
                p.description,
-               COUNT(f.id) AS fileCount,
-               COALESCE(SUM(f.charCount), 0) AS totalChars
+               p.fileCount,
+               p.totalChars
         FROM projects p
-        LEFT JOIN project_files f ON f.projectId = p.id
-        GROUP BY p.id
         ORDER BY p.modifiedAt DESC
         """
     )
@@ -37,12 +35,10 @@ interface ProjectDao {
                p.createdAt,
                p.modifiedAt,
                p.description,
-               COUNT(f.id) AS fileCount,
-               COALESCE(SUM(f.charCount), 0) AS totalChars
+               p.fileCount,
+               p.totalChars
         FROM projects p
-        LEFT JOIN project_files f ON f.projectId = p.id
         WHERE p.name LIKE '%' || :query || '%'
-        GROUP BY p.id
         ORDER BY p.modifiedAt DESC
         """
     )
@@ -56,12 +52,10 @@ interface ProjectDao {
                p.createdAt,
                p.modifiedAt,
                p.description,
-               COUNT(f.id) AS fileCount,
-               COALESCE(SUM(f.charCount), 0) AS totalChars
+               p.fileCount,
+               p.totalChars
         FROM projects p
-        LEFT JOIN project_files f ON f.projectId = p.id
         WHERE p.primaryLanguage = :language
-        GROUP BY p.id
         ORDER BY p.modifiedAt DESC
         """
     )
@@ -72,6 +66,27 @@ interface ProjectDao {
 
     @Query("SELECT * FROM project_files WHERE projectId = :projectId ORDER BY sortOrder ASC, id ASC")
     suspend fun getProjectFiles(projectId: Long): List<ProjectFileEntity>
+
+    @Query(
+        """
+        SELECT externalId, language
+        FROM project_files
+        WHERE projectId = :projectId AND externalId = :externalId
+        LIMIT 1
+        """
+    )
+    suspend fun getProjectFileRef(projectId: Long, externalId: String): ProjectFileRefRow?
+
+    @Query(
+        """
+        SELECT externalId, language
+        FROM project_files
+        WHERE projectId = :projectId
+        ORDER BY sortOrder ASC, id ASC
+        LIMIT 1
+        """
+    )
+    suspend fun getFirstProjectFileRef(projectId: Long): ProjectFileRefRow?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProject(project: ProjectEntity): Long
@@ -90,6 +105,19 @@ interface ProjectDao {
 
     @Query("SELECT COUNT(*) FROM projects")
     suspend fun getProjectCount(): Int
+
+    @Query("SELECT COUNT(*) FROM project_files WHERE projectId = :projectId")
+    suspend fun getProjectFileCount(projectId: Long): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) AS fileCount,
+               COALESCE(SUM(charCount), 0) AS totalChars
+        FROM project_files
+        WHERE projectId = :projectId
+        """
+    )
+    suspend fun getProjectFileStats(projectId: Long): ProjectFileStatsRow
 
     @Query(
         """
@@ -117,7 +145,9 @@ interface ProjectDao {
         UPDATE projects
         SET modifiedAt = :modifiedAt,
             primaryLanguage = :language,
-            activeFileExternalId = :activeFileExternalId
+            activeFileExternalId = :activeFileExternalId,
+            fileCount = :fileCount,
+            totalChars = :totalChars
         WHERE id = :projectId
         """
     )
@@ -125,6 +155,8 @@ interface ProjectDao {
         projectId: Long,
         language: Language,
         activeFileExternalId: String?,
+        fileCount: Int,
+        totalChars: Long,
         modifiedAt: Long = System.currentTimeMillis()
     )
 

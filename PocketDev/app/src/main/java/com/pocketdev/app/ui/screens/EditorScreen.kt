@@ -53,6 +53,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import com.pocketdev.app.ui.components.MarkdownText
 import com.pocketdev.app.ui.components.DiffViewer
+import com.pocketdev.app.ui.utils.DevicePerformance
+import com.pocketdev.app.ui.utils.rememberPerformanceTier
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -711,20 +713,11 @@ private fun EditorFileTabs(
     val files by viewModel.currentFiles.collectAsStateWithLifecycle()
     val activeFileIndex by viewModel.activeFileIndex.collectAsStateWithLifecycle()
     val onSwitchFile = remember(viewModel) { { index: Int -> viewModel.switchFile(index) } }
+    val tier = rememberPerformanceTier()
 
     if (files.isEmpty()) {
         return
     }
-
-    // Smooth animated tab indicator
-    val animatedIndicatorOffset by animateFloatAsState(
-        targetValue = activeFileIndex.toFloat(),
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "tabIndicatorOffset"
-    )
 
     Row(
         modifier = Modifier
@@ -757,11 +750,14 @@ private fun EditorFileTabs(
                         onClick = { onSwitchFile(index) },
                         modifier = Modifier
                             .height(48.dp)
-                            .animateContentSize(
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessLow
-                                )
+                            .then(
+                                if (tier == DevicePerformance.Tier.LOW) {
+                                    Modifier
+                                } else {
+                                    Modifier.animateContentSize(
+                                        animationSpec = tween(durationMillis = 120)
+                                    )
+                                }
                             )
                             .background(
                                 if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
@@ -772,12 +768,10 @@ private fun EditorFileTabs(
                             modifier = Modifier.padding(horizontal = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Animated icon scale
                             val iconScale by animateFloatAsState(
-                                targetValue = if (selected) 1.1f else 1f,
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessMedium
+                                targetValue = if (selected && tier != DevicePerformance.Tier.LOW) 1.08f else 1f,
+                                animationSpec = tween(
+                                    durationMillis = if (tier == DevicePerformance.Tier.LOW) 60 else 120
                                 ),
                                 label = "iconScale"
                             )
@@ -1412,6 +1406,61 @@ fun AiFeaturesMenu(
     }
 }
 
+private const val LARGE_FILE_CHAR_THRESHOLD = 12_000
+private const val LARGE_FILE_LINE_THRESHOLD = 1_000
+private const val HUGE_FILE_CHAR_THRESHOLD = 120_000
+private const val HUGE_FILE_LINE_THRESHOLD = 6_000
+private const val LARGE_FILE_VISIBLE_HIGHLIGHT_CHAR_LIMIT = 24_000
+
+private class EditorLineIndex private constructor(
+    private val newlinePositions: IntArray,
+    private val textLength: Int
+) {
+    val lineCount: Int = newlinePositions.size + 1
+
+    fun windowForLines(code: String, firstLine: Int, lastLine: Int): EditorVisibleWindow {
+        val safeFirst = firstLine.coerceIn(0, lineCount - 1)
+        val safeLast = lastLine.coerceIn(safeFirst, lineCount - 1)
+        val startOffset = lineToOffset(safeFirst).coerceIn(0, code.length)
+        val endOffset = lineToOffset(safeLast + 1).coerceIn(startOffset, code.length)
+        return EditorVisibleWindow(
+            firstLine = safeFirst,
+            lastLine = safeLast,
+            startOffset = startOffset,
+            endOffset = endOffset,
+            text = code.substring(startOffset, endOffset)
+        )
+    }
+
+    private fun lineToOffset(line: Int): Int {
+        return when {
+            line <= 0 -> 0
+            line > newlinePositions.size -> textLength
+            else -> newlinePositions[line - 1] + 1
+        }
+    }
+
+    companion object {
+        fun build(code: String): EditorLineIndex {
+            val positions = ArrayList<Int>()
+            for (i in code.indices) {
+                if (code[i] == '\n') {
+                    positions.add(i)
+                }
+            }
+            return EditorLineIndex(positions.toIntArray(), code.length)
+        }
+    }
+}
+
+private data class EditorVisibleWindow(
+    val firstLine: Int,
+    val lastLine: Int,
+    val startOffset: Int,
+    val endOffset: Int,
+    val text: String
+)
+
 @Composable
 fun CodeEditor(
     code: String,
@@ -1459,12 +1508,17 @@ fun CodeEditor(
         }
     }
 
-    // Use a stable highlighter state that persists across recompositions.
-    val highlighterState = remember { SyntaxHighlighterState() }
-    val isLargeFile = remember(textFieldValue.text) {
-        val lineCount = textFieldValue.text.count { it == '\n' } + 1
-        textFieldValue.text.length > 12_000 || lineCount > 1000
+    val lineIndex = remember(textFieldValue.text) { EditorLineIndex.build(textFieldValue.text) }
+    val logicalLineCount = lineIndex.lineCount
+    val isLargeFile = remember(textFieldValue.text.length, logicalLineCount) {
+        textFieldValue.text.length > LARGE_FILE_CHAR_THRESHOLD ||
+                logicalLineCount > LARGE_FILE_LINE_THRESHOLD
     }
+    val isHugeFile = remember(textFieldValue.text.length, logicalLineCount) {
+        textFieldValue.text.length > HUGE_FILE_CHAR_THRESHOLD ||
+                logicalLineCount > HUGE_FILE_LINE_THRESHOLD
+    }
+    val highlighterState = remember { SyntaxHighlighterState() }
 
     // Shared scroll state so line numbers scroll with code
     val verticalScrollState = rememberScrollState()
@@ -1478,117 +1532,104 @@ fun CodeEditor(
     val editorDensity = LocalDensity.current
     val lineHeightPx = with(editorDensity) { (fontSize * 1.5f).sp.toPx() }
 
-    // ===================================================================
-    // LARGE-FILE BACKGROUND TOKENIZATION (sora-editor AsyncIncrementalAnalyzeManager)
-    // ===================================================================
-    // Tokenizes on Dispatchers.Default with longer debounce for large files.
-    // Mirrors sora-editor's runCount deduplication which skips stale intermediate
-    // results during rapid typing. The token cache is used by highlightViewportFast()
-    // which builds AnnotatedString from line boundaries — only touching visible tokens.
-    LaunchedEffect(textFieldValue.text, language, isLargeFile) {
-        if (!isLargeFile) return@LaunchedEffect
-        val snapshotText = textFieldValue.text
-        val snapshotLanguage = language
-        // Larger debounce for large files — mirrors sora-editor's runCount deduplication
-        // which skips stale intermediate results during rapid typing.
-        delay(250)
-        withContext(Dispatchers.Default) {
-            highlighterState.populateTokenCache(snapshotText, snapshotLanguage)
-        }
-    }
-
-    // ===================================================================
-    // COMPUTED VISIBLE LINE RANGE (sora-editor's firstVisibleRow/lastVisibleRow)
-    // ===================================================================
-    // Using derivedStateOf ensures this only recalculates when scroll actually
-    // changes the visible line range — not on every pixel of scroll.
-    val visibleLineRange by remember {
+    val visibleLineRange by remember(isLargeFile, logicalLineCount, lineHeightPx) {
         derivedStateOf {
-            val first = if (viewportHeightPx > 0f && lineHeightPx > 0f) {
+            val buffer = if (isLargeFile) 8 else 2
+            val firstVisible = if (viewportHeightPx > 0f && lineHeightPx > 0f) {
                 (verticalScrollState.value / lineHeightPx).toInt().coerceAtLeast(0)
             } else 0
-            val count = if (viewportHeightPx > 0f && lineHeightPx > 0f) {
-                (viewportHeightPx / lineHeightPx).toInt() + 2
+            val visibleCount = if (viewportHeightPx > 0f && lineHeightPx > 0f) {
+                (viewportHeightPx / lineHeightPx).toInt() + 1
             } else 60
-            first to (first + count)
+            val first = (firstVisible - buffer).coerceAtLeast(0)
+            val last = (firstVisible + visibleCount + buffer).coerceAtMost(logicalLineCount - 1)
+            first to last
         }
     }
 
-    // ===================================================================
-    // MEMOIZED HIGHLIGHTED CODE (key optimization — prevents scroll recomputation)
-    // ===================================================================
-    // For large files: the highlighted AnnotatedString is memoized by the visible
-    // line range. The AnnotatedString is built from LINE BOUNDARIES (not iterating
-    // all tokens), which means we only touch visible-line tokens.
-    // For small files: standard incremental highlighting with remember cache.
-    val highlightedCode = if (isLargeFile) {
-        // Memoized by visible line range — only recomputes when lines change.
-        // This is the single most impactful optimization: scroll no longer triggers
-        // AnnotatedString rebuilding on every frame.
-        remember(textFieldValue.text, language, visibleLineRange.first, visibleLineRange.second) {
-            highlighterState.highlightViewportFast(textFieldValue.text, language, visibleLineRange.first, visibleLineRange.second)
-        }
-    } else {
+    val highlightedCode = if (!isLargeFile) {
         remember(textFieldValue.text, language) {
             highlighterState.highlightIncremental(textFieldValue.text, language)
         }
+    } else null
+
+    val visibleWindow = remember(textFieldValue.text, lineIndex, visibleLineRange.first, visibleLineRange.second) {
+        lineIndex.windowForLines(textFieldValue.text, visibleLineRange.first, visibleLineRange.second)
     }
-    
-    // Apply ghost suggestions or inline diffs on top of highlighted code
-    val displayCode = remember(highlightedCode, ghostSuggestion, inlineDiffSuggestion, textFieldValue.selection.start) {
-        when {
-            ghostSuggestion != null -> {
-            val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
-            val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-            builder.append(highlightedCode.subSequence(0, cursor))
-            builder.withStyle(
-                SpanStyle(
-                    color = Color(0xFF888888),
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )
-            ) {
-                append(ghostSuggestion)
+
+    val visibleHighlightedCode = if (isLargeFile && !isHugeFile) {
+        remember(visibleWindow.text, language) {
+            if (visibleWindow.text.length > LARGE_FILE_VISIBLE_HIGHLIGHT_CHAR_LIMIT) {
+                buildAnnotatedString { append(visibleWindow.text) }
+            } else {
+                SyntaxHighlighter.highlight(visibleWindow.text, language)
             }
-            builder.append(highlightedCode.subSequence(cursor, highlightedCode.length))
-            builder.toAnnotatedString()
         }
-        
-            inlineDiffSuggestion != null &&
-            inlineDiffSuggestion.deleteText != null &&
-            inlineDiffSuggestion.addText != null -> {
-            val builder = androidx.compose.ui.text.AnnotatedString.Builder()
-            val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
-            val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
+    } else null
 
-            builder.append(highlightedCode.subSequence(0, deleteStart))
+    val visibleTopPadding = with(editorDensity) {
+        (visibleWindow.firstLine * lineHeightPx).toDp()
+    }
 
-            if (deleteEnd > deleteStart) {
-                builder.withStyle(
-                    SpanStyle(
-                        color = Color(0xFFE53935),
-                        background = Color(0x33FFCDD2),
-                        textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
-                    )
-                ) {
-                    builder.append(highlightedCode.subSequence(deleteStart, deleteEnd))
+    val displayCode = if (!isLargeFile) {
+        remember(highlightedCode, ghostSuggestion, inlineDiffSuggestion, textFieldValue.selection.start, textFieldValue.text) {
+            val fullHighlightedCode = highlightedCode ?: buildAnnotatedString { append(textFieldValue.text) }
+            when {
+                ghostSuggestion != null -> {
+                    val cursor = textFieldValue.selection.start.coerceIn(0, textFieldValue.text.length)
+                    val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+                    builder.append(fullHighlightedCode.subSequence(0, cursor))
+                    builder.withStyle(
+                        SpanStyle(
+                            color = Color(0xFF888888),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    ) {
+                        append(ghostSuggestion)
+                    }
+                    builder.append(fullHighlightedCode.subSequence(cursor, fullHighlightedCode.length))
+                    builder.toAnnotatedString()
                 }
-            }
 
-            builder.withStyle(
-                SpanStyle(
-                    color = Color(0xFF2E7D32),
-                    background = Color(0x33C8E6C9)
-                )
-            ) {
-                append(inlineDiffSuggestion.addText)
-            }
+                inlineDiffSuggestion != null &&
+                        inlineDiffSuggestion.deleteText != null &&
+                        inlineDiffSuggestion.addText != null -> {
+                    val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+                    val deleteStart = inlineDiffSuggestion.editStartPos.coerceIn(0, textFieldValue.text.length)
+                    val deleteEnd = inlineDiffSuggestion.editEndPos.coerceIn(0, textFieldValue.text.length)
 
-            builder.append(highlightedCode.subSequence(deleteEnd, highlightedCode.length))
-            builder.toAnnotatedString()
+                    builder.append(fullHighlightedCode.subSequence(0, deleteStart))
+
+                    if (deleteEnd > deleteStart) {
+                        builder.withStyle(
+                            SpanStyle(
+                                color = Color(0xFFE53935),
+                                background = Color(0x33FFCDD2),
+                                textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
+                            )
+                        ) {
+                            builder.append(fullHighlightedCode.subSequence(deleteStart, deleteEnd))
+                        }
+                    }
+
+                    builder.withStyle(
+                        SpanStyle(
+                            color = Color(0xFF2E7D32),
+                            background = Color(0x33C8E6C9)
+                        )
+                    ) {
+                        append(inlineDiffSuggestion.addText)
+                    }
+
+                    builder.append(fullHighlightedCode.subSequence(deleteEnd, fullHighlightedCode.length))
+                    builder.toAnnotatedString()
+                }
+
+                else -> fullHighlightedCode
+            }
         }
-        
-            else -> highlightedCode
-        }
+    } else {
+        remember { buildAnnotatedString { } }
     }
 
 
@@ -1618,9 +1659,6 @@ fun CodeEditor(
     // Track visual line mapping for word wrap mode
     var visualLineInfo by remember { mutableStateOf(1 to emptyMap<Int, Int>()) }
 
-    val logicalLineCount = remember(textFieldValue.text) {
-        textFieldValue.text.count { it == '\n' } + 1
-    }
     val lineNumberWidth = remember(lineNumbers, logicalLineCount, fontSize) {
         if (lineNumbers) {
             (maxOf(logicalLineCount, 1).toString().length * fontSize * 0.6 + 12).dp
@@ -1736,11 +1774,13 @@ fun CodeEditor(
                 Column(
                     modifier = Modifier
                         .width(lineNumberWidth)
-                        .fillMaxHeight()
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         .padding(start = 2.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.End
                 ) {
+                    if (isLargeFile) {
+                        Spacer(modifier = Modifier.height(visibleTopPadding))
+                    }
                     Text(
                         text = lineNumbersText,
                         style = lineNumberTextStyle,
@@ -1979,14 +2019,27 @@ fun CodeEditor(
                             }
                             false
                         },
-                    textStyle = transparentCodeTextStyle,
+                    textStyle = if (isHugeFile) codeTextStyle else transparentCodeTextStyle,
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerTextField ->
                         Box {
-                            Text(
-                                text = displayCode,
-                                style = codeTextStyle
-                            )
+                            when {
+                                isHugeFile -> Unit
+                                isLargeFile -> {
+                                    Text(
+                                        text = visibleHighlightedCode
+                                            ?: buildAnnotatedString { append(visibleWindow.text) },
+                                        style = codeTextStyle,
+                                        modifier = Modifier.padding(top = visibleTopPadding)
+                                    )
+                                }
+                                else -> {
+                                    Text(
+                                        text = displayCode,
+                                        style = codeTextStyle
+                                    )
+                                }
+                            }
                             innerTextField()
                         }
                     }
@@ -2256,7 +2309,7 @@ private fun TerminalMessagesList(
         ) {
             itemsIndexed(
                 items = messages,
-                key = { index, msg -> "$index:${msg.type}:${msg.text.hashCode()}" }
+                key = { _, msg -> msg.id }
             ) { _, msg ->
                 val style = when (msg.type) {
                     com.pocketdev.app.execution.TerminalMessageType.NORMAL -> normalTextStyle
@@ -2428,6 +2481,33 @@ fun FindReplaceBar(
 
 @Composable
 fun AiLoadingDialog() {
+    if (rememberPerformanceTier() == DevicePerformance.Tier.LOW) {
+        AlertDialog(
+            onDismissRequest = {},
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false
+            ),
+            title = { Text("AI is thinking...", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "Analyzing your code with Groq AI",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {}
+        )
+        return
+    }
+
     // Premium shimmer loading animation
     val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
     val shimmerPhase by infiniteTransition.animateFloat(

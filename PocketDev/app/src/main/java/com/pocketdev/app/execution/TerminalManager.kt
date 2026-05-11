@@ -11,13 +11,19 @@ enum class TerminalMessageType {
 }
 
 data class TerminalMessage(
+    val id: Long,
     val text: String,
     val type: TerminalMessageType
 )
 
 class TerminalManager {
+    private companion object {
+        const val MAX_MESSAGES = 400
+    }
+
     private val _messages = MutableStateFlow<List<TerminalMessage>>(emptyList())
     val messages: StateFlow<List<TerminalMessage>> = _messages.asStateFlow()
+    private var nextMessageId = 0L
 
     // Interactive input support
     private val _isWaitingForInput = MutableStateFlow(false)
@@ -25,34 +31,45 @@ class TerminalManager {
 
     val inputQueue = LinkedBlockingQueue<String>()
 
+    private fun appendMessage(text: String, type: TerminalMessageType) {
+        _messages.update { current ->
+            val next = current + TerminalMessage(
+                id = nextMessageId++,
+                text = text,
+                type = type
+            )
+            if (next.size > MAX_MESSAGES) next.takeLast(MAX_MESSAGES) else next
+        }
+    }
+
     fun appendOutput(text: String) {
         val trimmed = text.trimEnd()
         if (trimmed.isNotEmpty()) {
-            _messages.update { it + TerminalMessage(trimmed, TerminalMessageType.NORMAL) }
+            appendMessage(trimmed, TerminalMessageType.NORMAL)
         }
     }
 
     fun appendError(text: String) {
         val trimmed = text.trimEnd()
         if (trimmed.isNotEmpty()) {
-            _messages.update { it + TerminalMessage(trimmed, TerminalMessageType.ERROR) }
+            appendMessage(trimmed, TerminalMessageType.ERROR)
         }
     }
 
     fun appendAgentMessage(text: String) {
         if (text.isNotEmpty()) {
-            _messages.update { it + TerminalMessage(text, TerminalMessageType.AGENT) }
+            appendMessage(text, TerminalMessageType.AGENT)
         }
     }
 
     fun appendStatusMessage(text: String) {
         if (text.isNotEmpty()) {
-            _messages.update { it + TerminalMessage(text, TerminalMessageType.STATUS) }
+            appendMessage(text, TerminalMessageType.STATUS)
         }
     }
 
     fun appendInputPrompt(text: String) {
-        _messages.update { it + TerminalMessage(text, TerminalMessageType.INPUT_PROMPT) }
+        appendMessage(text, TerminalMessageType.INPUT_PROMPT)
     }
 
     fun requestInput(prompt: String): String {

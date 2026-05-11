@@ -38,6 +38,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.pocketdev.app.ui.utils.DevicePerformance
+import com.pocketdev.app.ui.utils.rememberPerformanceTier
 import com.pocketdev.app.viewmodels.SettingsViewModel
 import kotlinx.coroutines.delay
 
@@ -72,12 +74,15 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     var showResetDialog by remember { mutableStateOf(false) }
     var showApiKeyInfo by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+    val tier = rememberPerformanceTier()
     
     // Animated entrance
-    var isLoaded by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(100)
-        isLoaded = true
+    var isLoaded by remember { mutableStateOf(tier == DevicePerformance.Tier.LOW) }
+    LaunchedEffect(tier) {
+        if (tier != DevicePerformance.Tier.LOW) {
+            delay(100)
+            isLoaded = true
+        }
     }
 
     Scaffold(

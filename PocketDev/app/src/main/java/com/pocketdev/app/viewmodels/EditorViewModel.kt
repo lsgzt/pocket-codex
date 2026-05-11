@@ -98,8 +98,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var lastAiPrompt = ""
     private var lastAiResult = ""
 
-    // Auto-save job
-    private var autoSaveJob: Job? = null
     private var hasUnsavedChanges = false
 
     private val _searchQuery = MutableStateFlow("")
@@ -167,14 +165,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         // Clear ghost suggestion but do not cancel the job, so it can run after typing
         _ghostSuggestion.value = null
 
+        val activeIndexSnapshot = _activeFileIndex.value
+        val activeFileSnapshot = _currentFiles.value.getOrNull(activeIndexSnapshot)
+        val activeFileIdSnapshot = activeFileSnapshot?.id
+        val languageSnapshot = _currentLanguage.value
+
         // Sync to files list only after a short delay to avoid excessive recompositions
         // in UI components observing files (like tabs)
         syncFilesJob?.cancel()
         syncFilesJob = viewModelScope.launch {
             delay(500)
             val files = _currentFiles.value
-            val activeIndex = _activeFileIndex.value
-            if (activeIndex in files.indices && files[activeIndex].code != code) {
+            val activeIndex = activeIndexSnapshot
+            if (
+                activeIndex in files.indices &&
+                files[activeIndex].id == activeFileIdSnapshot &&
+                files[activeIndex].code != code
+            ) {
                 val updated = files.toMutableList()
                 updated[activeIndex] = updated[activeIndex].copy(code = code)
                 _currentFiles.value = updated
@@ -189,15 +196,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 prefsManager.setUnsavedCode(code)
             } else {
                 prefsManager.setUnsavedCode(null)
-                val files = _currentFiles.value
-                val activeIndex = _activeFileIndex.value
-                if (activeIndex in files.indices) {
+                if (!activeFileIdSnapshot.isNullOrBlank()) {
                     runCatching {
                         projectRepository.updateFileContent(
                             projectId = projectId,
-                            fileExternalId = files[activeIndex].id,
+                            fileExternalId = activeFileIdSnapshot,
                             code = code,
-                            language = _currentLanguage.value
+                            language = languageSnapshot
                         )
                     }
                 }
@@ -384,6 +389,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 val projectName = name ?: _currentProjectName.value
                 val existingId = _currentProjectId.value
 
+                saveJob?.cancel()
+                syncFilesJob?.cancel()
                 syncCurrentCodeToActiveFile()
                 val project = Project(
                     id = existingId ?: 0,
@@ -857,22 +864,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _aiState.value = UiState.Idle
     }
 
-    private fun scheduleAutoSave() {
-        autoSaveJob?.cancel()
-        if (_currentProjectId.value != null) {
-            autoSaveJob = viewModelScope.launch {
-                delay(30_000) // Auto-save after 30 seconds of inactivity
-                if (hasUnsavedChanges) {
-                    val projectId = _currentProjectId.value
-                    if (projectId != null) {
-                        projectRepository.updateCode(projectId, _currentCode.value)
-                        hasUnsavedChanges = false
-                    }
-                }
-            }
-        }
-    }
-
     private fun syncCurrentCodeToActiveFile() {
         val files = _currentFiles.value
         val activeIndex = _activeFileIndex.value
@@ -902,6 +893,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
-        autoSaveJob?.cancel()
+        saveJob?.cancel()
+        syncFilesJob?.cancel()
+        ghostSuggestionJob?.cancel()
     }
 }
