@@ -3,9 +3,11 @@ apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-kapt'
 apply plugin: 'com.chaquo.python'
 
-// Release signing config — credentials live in keystore.properties (NOT committed).
-// A pre-generated keystore is used when present; otherwise fall back to debug
-// signing so the build never breaks for contributors without the key.
+// Release signing config — reads PocketDev/keystore.properties, which points at
+// keystore/pocketdev-release.keystore. Both are committed to this repo at the
+// owner's request so the signed release build is reproducible by anyone.
+// If keystore.properties is missing (e.g. stripped downstream), the build falls
+// back to debug signing so it never breaks for contributors.
 def keystorePropsFile = rootProject.file("keystore.properties")
 def keystoreProps = new Properties()
 if (keystorePropsFile.exists()) {
