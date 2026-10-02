@@ -72,6 +72,30 @@ class TerminalManager {
         appendMessage(text, TerminalMessageType.INPUT_PROMPT)
     }
 
+    // ------------------------------------------------------------------
+    // Streaming agent support (live AI chat + thinking display)
+    // ------------------------------------------------------------------
+
+    /** Creates an empty agent message used for live streaming updates. */
+    fun startStreamingAgent(): Long {
+        val id = nextMessageId++
+        _messages.update { current ->
+            val next = current + TerminalMessage(id = id, text = "", type = TerminalMessageType.AGENT)
+            if (next.size > MAX_MESSAGES) next.takeLast(MAX_MESSAGES) else next
+        }
+        return id
+    }
+
+    /** Replaces the text of a streaming agent message (no-op if unchanged). */
+    fun updateStreamingAgent(id: Long, text: String) {
+        if (text.isEmpty()) return
+        _messages.update { current ->
+            val existing = current.firstOrNull { it.id == id } ?: return@update current
+            if (existing.text == text) current
+            else current.map { if (it.id == id) it.copy(text = text) else it }
+        }
+    }
+
     fun requestInput(prompt: String): String {
         if (prompt.isNotEmpty()) {
             appendInputPrompt(prompt)

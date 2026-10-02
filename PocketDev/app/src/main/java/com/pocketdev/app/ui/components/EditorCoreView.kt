@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -28,6 +29,35 @@ import io.github.rosemoe.sora.widget.CodeEditor
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+
+private const val LARGE_FILE_CHARS = 120_000
+
+/**
+ * Debounced text synchronization controller.
+ *
+ * - Schedules a single delayed job per burst of keystrokes; the expensive
+ *   `editor.text.toString()` materialization happens ONLY when the debounce
+ *   actually fires.
+ * - [lastSynced] lets the AndroidView update block decide whether an external
+ *   `setText` is needed WITHOUT copying the whole buffer per recomposition.
+ * - [cancelPending] prevents a stale debounce (e.g. from a previous tab) from
+ *   overwriting freshly loaded content.
+ */
+@Stable
+private class TextSyncer(private val scope: CoroutineScope) {
+    private var job: kotlinx.coroutines.Job? = null
+    var lastSynced: String = ""
+    fun schedule(supply: () -> String, onEmit: (String) -> Unit) {
+        job?.cancel()
+        job = scope.launch {
+            kotlinx.coroutines.delay(100) // 100ms debounce
+            val text = supply()
+            lastSynced = text
+            onEmit(text)
+        }
+    }
+    fun cancelPending() { job?.cancel() }
+}
 
 private fun lineColumnToOffset(text: CharSequence, line: Int, column: Int): Int {
     if (line <= 0) return column.coerceIn(0, text.length)
@@ -125,24 +155,30 @@ fun EditorCoreView(
         runCatching { adapter.createDelegatedLanguage(lang) }
             .getOrNull() ?: lang
     }
-    // Debounced code change emitter to reduce rapid state updates for large files
+
+    // --- Large-file handling: expensive features are auto-disabled -------------
+    // Word-wrap forces full relayout on every edit; skip it for very large files.
+    val isLargeFile = code.length > LARGE_FILE_CHARS
+    val effectiveWordWrap = wordWrap && !isLargeFile
+
+    // --- Debounced text sync ------------------------------------------------------
+    // Key optimizations over the naive approach:
+    //  1. The full text is materialized (editor.text.toString()) only when the
+    //     debounce actually fires — NOT on every keystroke (critical for 1MB files).
+    //  2. lastSynced tracks the last text we know about so the AndroidView update
+    //     block never needs to copy the whole buffer just to compare.
+    //  3. Pending debounce jobs are cancelled when an external setText happens,
+    //     which prevents a stale edit from a previous file overwriting the new one.
     val coroutineScope = rememberCoroutineScope()
-    val latestOnCodeChangeDebounced = remember {
-        var job: kotlinx.coroutines.Job? = null
-        { newText: String ->
-            job?.cancel()
-            job = coroutineScope.launch {
-                kotlinx.coroutines.delay(100) // 100ms debounce
-                onCodeChange(newText)
-            }
-        }
-    }
     val latestOnCodeChange by rememberUpdatedState(onCodeChange)
     val latestOnCursorChange by rememberUpdatedState(onCursorChange)
     val latestOnCursorPositionChange by rememberUpdatedState(onCursorPositionChange)
     val latestSelectionOffset by rememberUpdatedState(selectionOffset)
     val latestOnGhostAccepted by rememberUpdatedState(onGhostAccepted)
     val latestGhostSuggestion by rememberUpdatedState(ghostSuggestion)
+    val latestEffectiveWordWrap by rememberUpdatedState(effectiveWordWrap)
+
+    val textSyncer = remember { TextSyncer(coroutineScope) }
     val density = LocalDensity.current
     val textSizePx = with(density) { fontSize.sp.toPx() }
 
@@ -152,6 +188,9 @@ fun EditorCoreView(
     
     // Memory-efficient cursor tracking
     val cursorTracker = remember { CursorTracker() }
+    
+    // Initialize the syncer with the starting text
+    LaunchedEffect(Unit) { textSyncer.lastSynced = code }
     
 
     // Cache the color scheme — recreate only when theme changes (stable key)
@@ -172,29 +211,37 @@ fun EditorCoreView(
                 try {
                     // Basic editor config
                     runCatching { editor.isLineNumberEnabled = lineNumbers }
-                    runCatching { editor.isWordwrap = wordWrap }
+                    runCatching { editor.isWordwrap = effectiveWordWrap }
                     runCatching { editor.setTextSizePx(textSizePx) }
 
                     // Theme: apply cached color scheme
                     cachedColorScheme?.let { editor.colorScheme = it }
 
                     // Language with syntax highlighting + autocomplete
-                    val textMateLang = TextMateLanguage.create(language.toScopeName(), true)
-                    val adapter = SoraAutocompleteAdapter(language)
-                    val delegatedLang = adapter.createDelegatedLanguage(textMateLang)
+                    val textMateLang = memoizedLang
+                    val delegatedLang = runCatching { memoizedAdapter.createDelegatedLanguage(textMateLang) }
+                        .map { it as? io.github.rosemoe.sora.langs.textmate.TextMateLanguage ?: textMateLang }
+                        .getOrDefault(textMateLang)
                     runCatching { editor.setEditorLanguage(delegatedLang as io.github.rosemoe.sora.langs.textmate.TextMateLanguage) }
                         .recoverCatching { editor.setEditorLanguage(textMateLang) }
 
                     if (code.isNotEmpty()) editor.setText(code)
+                    // Mark initial content as synced so the first AndroidView
+                    // update pass does not repeat setText (avoids an extra full
+                    // buffer pass on first frame for large files).
+                    textSyncer.lastSynced = code
 
-                    // Text change listener with debounce for large files
+                    // Text change listener with debounce for large files.
+                    // NOTE: the full text is only materialized inside the debounce
+                    // coroutine, not per keystroke.
                     runCatching {
-                        editor.subscribeEvent(ContentChangeEvent::class.java) { event, _ ->
+                        editor.subscribeEvent(ContentChangeEvent::class.java) { _, _ ->
                             if (internalUpdate) return@subscribeEvent
                             runCatching {
-                                val newText = editor.text.toString()
-                                // Debounced update to reduce UI churn for large files
-                                latestOnCodeChangeDebounced(newText)
+                                textSyncer.schedule(
+                                    supply = { editor.text.toString() },
+                                    onEmit = { newText -> latestOnCodeChange(newText) }
+                                )
                             }
                         }
                     }
@@ -248,7 +295,7 @@ fun EditorCoreView(
         },
         update = { editor ->
             runCatching { editor.isLineNumberEnabled = lineNumbers }
-            runCatching { editor.isWordwrap = wordWrap }
+            runCatching { editor.isWordwrap = latestEffectiveWordWrap }
             runCatching { editor.setTextSizePx(textSizePx) }
 
             // Update language if scope changed
@@ -267,22 +314,30 @@ fun EditorCoreView(
 
             if (currentScope != language.toScopeName()) {
                 runCatching {
-                    val textMateLang = TextMateLanguage.create(language.toScopeName(), true)
-                    val adapter = SoraAutocompleteAdapter(language)
-                    val delegatedLang = adapter.createDelegatedLanguage(textMateLang)
+                    // Reuse memoized instances — no per-recomposition grammar loading
+                    val delegatedLang = runCatching { memoizedAdapter.createDelegatedLanguage(memoizedLang) }
+                        .map { it as? io.github.rosemoe.sora.langs.textmate.TextMateLanguage ?: memoizedLang }
+                        .getOrDefault(memoizedLang)
                     runCatching { editor.setEditorLanguage(delegatedLang as io.github.rosemoe.sora.langs.textmate.TextMateLanguage) }
-                        .recoverCatching { editor.setEditorLanguage(textMateLang) }
+                        .recoverCatching { editor.setEditorLanguage(memoizedLang) }
                 }
             }
 
-            // Sync external code changes
-            if (code != editor.text.toString()) {
+            // Sync external code changes.
+            // PERF: compare against the lightweight lastSynced marker instead of
+            // copying the entire editor buffer (editor.text.toString()) on every
+            // recomposition — critical to keep large files buttery smooth.
+            if (code != textSyncer.lastSynced) {
+                // Cancel any pending user-edit emission so a stale debounce from a
+                // previous file/tab can never overwrite this fresh content.
+                textSyncer.cancelPending()
                 // Prevent triggering the ContentChangeEvent handler while updating programmatically
                 internalUpdate = true
                 val cursorPos = latestSelectionOffset?.coerceIn(0, code.length)
                     ?: getCursorIndex(editor.cursor.left, editor.text)
                 runCatching {
                     editor.setText(code)
+                    textSyncer.lastSynced = code
                     val pos = cursorPos.coerceAtMost(editor.text.length)
                     runCatching { editor.setSelection(pos, pos) }
                         .recoverCatching {

@@ -1,6 +1,7 @@
 package com.pocketdev.app.data.models
 
 import androidx.compose.runtime.Immutable
+import com.pocketdev.app.api.AiProvider
 
 @Immutable
 data class ExecutionResult(
@@ -44,7 +45,22 @@ data class AiResult(
     val deleteText: String? = null,  // Text to be deleted (shown in red)
     val addText: String? = null,     // Text to be added (shown in green)
     val editStartPos: Int = 0,       // Position where edit starts
-    val editEndPos: Int = 0          // Position where edit ends (for deletion)
+    val editEndPos: Int = 0,         // Position where edit ends (for deletion)
+    // Reasoning / chain-of-thought produced by thinking models
+    val reasoning: String? = null
+)
+
+/** Live progress of an in-flight AI request (streaming + thinking). */
+enum class AiStreamPhase { CONNECTING, THINKING, ANSWERING }
+
+@Immutable
+data class AiStreamState(
+    val provider: AiProvider,
+    val model: String,
+    val thinkingEnabled: Boolean,
+    val phase: AiStreamPhase = AiStreamPhase.CONNECTING,
+    val reasoning: String = "",
+    val answer: String = ""
 )
 
 sealed class UiState<out T> {

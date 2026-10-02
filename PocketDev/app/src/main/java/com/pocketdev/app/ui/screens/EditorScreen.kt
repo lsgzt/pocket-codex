@@ -1132,7 +1132,7 @@ private fun EditorDialogsHost(
     uiState: EditorUiState
 ) {
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
-
+    val aiStreamState by viewModel.aiStreamState.collectAsStateWithLifecycle()
     val onDismissAiResult = remember(viewModel) { { viewModel.dismissAiResult() } }
     val onApplyAiCode = remember(viewModel) { { code: String -> viewModel.applyAiCode(code) } }
     val onFollowUp = remember(viewModel) { { question: String -> viewModel.askFollowUpQuestion(question) } }
@@ -1170,7 +1170,12 @@ private fun EditorDialogsHost(
     }
 
     if (aiState is UiState.Loading) {
-        AiLoadingDialog()
+        val stream = aiStreamState
+        if (stream != null) {
+            AiStreamingDialog(streamState = stream)
+        } else {
+            AiLoadingDialog()
+        }
     } else if (aiState is UiState.Success) {
         val result = (aiState as UiState.Success<AiResult>).data
         if (!result.isEdit) {
@@ -2676,6 +2681,206 @@ fun AiLoadingDialog() {
 }
 
 @Composable
+fun AiStreamingDialog(streamState: AiStreamState) {
+    val isThinkingPhase = streamState.phase == AiStreamPhase.THINKING
+    val isAnsweringPhase = streamState.phase == AiStreamPhase.ANSWERING
+
+    // Smooth pulse for the status icon
+    val infiniteTransition = rememberInfiniteTransition(label = "aiStream")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = FastOutSlowInEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2600, easing = LinearOutSlowInEasing)
+        ),
+        label = "rotation"
+    )
+
+    // Auto-scroll reasoning / answer tails
+    val reasoningScroll = rememberScrollState()
+    val answerScroll = rememberScrollState()
+    LaunchedEffect(streamState.reasoning) {
+        if (isThinkingPhase) reasoningScroll.animateScrollTo(reasoningScroll.maxValue)
+    }
+    LaunchedEffect(streamState.answer) {
+        if (isAnsweringPhase) answerScroll.animateScrollTo(answerScroll.maxValue)
+    }
+
+    AlertDialog(
+        onDismissRequest = {},
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        ),
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = if (isThinkingPhase) Icons.Default.Psychology else Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = if (isThinkingPhase) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .graphicsLayer {
+                            scaleX = pulseScale
+                            scaleY = pulseScale
+                            rotationZ = if (isThinkingPhase) rotation else rotation * 0.15f
+                        }
+                )
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    AnimatedContent(
+                        targetState = streamState.phase,
+                        transitionSpec = {
+                            (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 3 })
+                                .togetherWith(fadeOut(tween(180)))
+                        },
+                        label = "phaseTitle"
+                    ) { phase ->
+                        Text(
+                            text = when (phase) {
+                                AiStreamPhase.CONNECTING -> "Connecting to ${streamState.provider.displayName}…"
+                                AiStreamPhase.THINKING -> "Model is thinking…"
+                                AiStreamPhase.ANSWERING -> "Writing the answer…"
+                            },
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    Text(
+                        text = buildString {
+                            append(streamState.model)
+                            if (streamState.thinkingEnabled) append("  •  reasoning on")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Determinate-looking progress bar synced to phase
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    color = if (isThinkingPhase) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.primary
+                )
+
+                // ---- Live reasoning panel ----
+                AnimatedVisibility(
+                    visible = streamState.reasoning.isNotEmpty(),
+                    enter = fadeIn(tween(240)) + expandVertically(tween(240)),
+                    exit = fadeOut(tween(180)) + shrinkVertically(tween(180))
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Psychology,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Thought process",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = streamState.reasoning,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 16.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 170.dp)
+                                    .verticalScroll(reasoningScroll)
+                                    .padding(10.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
+
+                // ---- Live answer panel ----
+                AnimatedVisibility(
+                    visible = streamState.answer.isNotEmpty(),
+                    enter = fadeIn(tween(240)) + expandVertically(tween(240)),
+                    exit = fadeOut(tween(180))
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Answer",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = streamState.answer,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 220.dp)
+                                    .verticalScroll(answerScroll)
+                                    .padding(10.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Idle placeholder while connecting
+                AnimatedVisibility(visible = streamState.reasoning.isEmpty() && streamState.answer.isEmpty()) {
+                    Text(
+                        "Waiting for the first tokens…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {}
+    )
+}
+
+@Composable
 fun AiResultDialog(
     result: AiResult,
     language: Language,
@@ -2686,6 +2891,7 @@ fun AiResultDialog(
 ) {
     val scrollState = rememberScrollState()
     var followUpText by remember { mutableStateOf("") }
+    var showReasoning by remember(result) { mutableStateOf(false) }
     val proposedCodeShape = remember { RoundedCornerShape(8.dp) }
     val onSurfaceVariantColor3 = MaterialTheme.colorScheme.onSurfaceVariant
     val proposedCodeTextStyle = remember(onSurfaceVariantColor3) {
@@ -2709,6 +2915,64 @@ fun AiResultDialog(
                         .weight(1f, fill = false)
                         .verticalScroll(scrollState)
                 ) {
+                    // Collapsible thought-process section from thinking models
+                    if (!result.reasoning.isNullOrBlank()) {
+                        Surface(
+                            onClick = { showReasoning = !showReasoning },
+                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Psychology,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Model's thought process",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    imageVector = if (showReasoning) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (showReasoning) "Hide" else "Show"
+                                )
+                            }
+                        }
+                        AnimatedVisibility(
+                            visible = showReasoning,
+                            enter = fadeIn(tween(200)) + expandVertically(tween(220)),
+                            exit = fadeOut(tween(160)) + shrinkVertically(tween(200))
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                Text(
+                                    text = result.reasoning,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        lineHeight = 15.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+                    }
+
                     MarkdownText(
                         text = result.content,
                         modifier = Modifier.fillMaxWidth()

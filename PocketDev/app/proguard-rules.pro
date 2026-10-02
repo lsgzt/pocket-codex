@@ -47,3 +47,16 @@
     public static *** d(...);
     public static *** v(...);
 }
+
+# Keep Sora editor + TextMate (accessed via reflection in EditorCoreView)
+-keep class io.github.rosemoe.sora.** { *; }
+-keep class org.eclipse.tm4e.** { *; }
+-dontwarn io.github.rosemoe.sora.**
+-dontwarn org.eclipse.tm4e.**
+
+# OkHttp / OkIO
+-dontwarn okhttp3.**
+-dontwarn okio.**
+
+# Java Diff Utils (used by DiffViewer)
+-dontwarn com.github.difflib.**

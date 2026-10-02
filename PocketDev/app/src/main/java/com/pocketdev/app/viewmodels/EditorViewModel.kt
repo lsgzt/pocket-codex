@@ -6,7 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketdev.app.data.models.*
 import com.pocketdev.app.execution.ExecutionManager
-import com.pocketdev.app.repository.GroqRepository
+import com.pocketdev.app.api.AiConfig
+import com.pocketdev.app.api.AiProvider
+import com.pocketdev.app.repository.AiRepository
+import com.pocketdev.app.repository.ChatStreamEvent
 import com.pocketdev.app.repository.ProjectRepository
 import com.pocketdev.app.utils.NetworkUtils
 import com.pocketdev.app.utils.PreferencesManager
@@ -24,7 +27,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private val context: Context = application.applicationContext
     private val projectRepository = ProjectRepository(context)
-    private val groqRepository = GroqRepository()
+    private val aiRepository = AiRepository()
     private val executionManager = ExecutionManager(context)
     private val secureStorage = SecureStorage(context)
     private val prefsManager = PreferencesManager(context)
@@ -32,12 +35,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val terminalManager = TerminalManager()
     private val aiExecutionAgent = AIExecutionAgent(
         executionManager = executionManager,
-        groqRepository = groqRepository,
+        aiRepository = aiRepository,
         terminalManager = terminalManager,
         updateCode = { newCode -> updateCode(newCode) },
-        getApiKey = {
-            secureStorage.groqApiKey
-        }
+        getAiConfig = { resolveAiConfig(reportError = false) }
     )
 
     // Current editor state
@@ -77,6 +78,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _aiState = MutableStateFlow<UiState<AiResult>>(UiState.Idle)
     val aiState: StateFlow<UiState<AiResult>> = _aiState
 
+    // Live streaming state (thinking + answer preview) for the loading dialog
+    private val _aiStreamState = MutableStateFlow<AiStreamState?>(null)
+    val aiStreamState: StateFlow<AiStreamState?> = _aiStreamState
+
     private val _ghostSuggestion = MutableStateFlow<String?>(null)
     val ghostSuggestion: StateFlow<String?> = _ghostSuggestion
 
@@ -90,6 +95,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val diffSuggestion: StateFlow<AiResult?> = _diffSuggestion
 
     private var ghostSuggestionJob: Job? = null
+
+    companion object {
+        /** UI stream snapshots are throttled so fast reasoning models can't jank the UI. */
+        private const val STREAM_UI_THROTTLE_MS = 80L
+        /** Caps for text shown live in the AI progress dialog (tail is kept). */
+        private const val REASONING_UI_CAP = 6000
+        private const val ANSWER_UI_CAP = 12000
+        /** AI ghost suggestions are skipped for files larger than this. */
+        private const val GHOST_MAX_FILE_CHARS = 80_000
+    }
 
     // Save state
     private val _saveState = MutableStateFlow<UiState<Unit>>(UiState.Idle)
@@ -444,8 +459,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // AI Features
     fun fixBug() {
-        callAiFeature { files, activeFileName, key, model ->
-            groqRepository.fixBug(files, activeFileName, key, model)
+        callAiFeature { files, activeFileName, config, onEvent ->
+            aiRepository.fixBug(files, activeFileName, config, onEvent)
         }
     }
 
@@ -465,73 +480,64 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             append("3. Any important concepts used\n")
             append("4. Tips for beginners")
         }
-        callAiFeature { f, a, key, model ->
-            val result = groqRepository.explainCode(f, a, key, model)
+        callAiFeature { f, a, config, onEvent ->
+            val result = aiRepository.explainCode(f, a, config, onEvent)
             lastAiResult = result.content
             result
         }
     }
 
     fun askFollowUpQuestion(question: String) {
-        val apiKey = secureStorage.groqApiKey
-        if (apiKey.isBlank()) {
-            _aiState.value = UiState.Error("Groq API key not set.")
-            return
-        }
-        if (!NetworkUtils.isOnline(context)) {
-            _aiState.value = UiState.Error("No internet connection.")
-            return
-        }
         viewModelScope.launch {
             _aiState.value = UiState.Loading
-            val model = prefsManager.aiModel.first()
-            val result = groqRepository.askFollowUp(lastAiPrompt, lastAiResult, question, apiKey, model)
-            if (result.isSuccess) {
-                lastAiResult = lastAiResult + "\n\n**Q: $question**\n\n" + result.content
-                _aiState.value = UiState.Success(result.copy(content = lastAiResult))
-            } else {
-                _aiState.value = UiState.Error(result.errorMessage ?: "Failed to get follow-up answer")
+            val config = resolveAiConfig() ?: return@launch
+            val handler = makeStreamHandler(config)
+            try {
+                val result = aiRepository.askFollowUp(lastAiPrompt, lastAiResult, question, config, handler)
+                if (result.isSuccess) {
+                    lastAiResult = lastAiResult + "\n\n**Q: $question**\n\n" + result.content
+                    _aiState.value = UiState.Success(result.copy(content = lastAiResult))
+                } else {
+                    _aiState.value = UiState.Error(result.errorMessage ?: "Failed to get follow-up answer")
+                }
+            } finally {
+                _aiStreamState.value = null
             }
         }
     }
 
     fun improveCode() {
-        callAiFeature { files, activeFileName, key, model ->
-            groqRepository.improveCode(files, activeFileName, key, model)
+        callAiFeature { files, activeFileName, config, onEvent ->
+            aiRepository.improveCode(files, activeFileName, config, onEvent)
         }
     }
 
     fun writeCodeWithAi(prompt: String) {
         val files = _currentFiles.value
 
-        val apiKey = secureStorage.groqApiKey
-        if (apiKey.isBlank()) {
-            _aiState.value = UiState.Error(
-                "Groq API key not set.\nPlease add your API key in Settings to use AI features."
-            )
-            return
-        }
-
-        if (!NetworkUtils.isOnline(context)) {
-            _aiState.value = UiState.Error(
-                "No internet connection.\nPlease connect to the internet to use AI features."
-            )
+        if (files.isEmpty()) {
+            _aiState.value = UiState.Error("No code to analyze. Write some code first!")
             return
         }
 
         viewModelScope.launch {
             _aiState.value = UiState.Loading
-            val model = prefsManager.aiModel.first()
-            val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else "main.py"
-            val result = groqRepository.modifyCode(prompt, files, activeFileName, apiKey, model)
-            if (result.isSuccess) {
-                if (result.patches.isNotEmpty()) {
-                    _aiState.value = UiState.Success(result.copy(isEdit = true))
+            val config = resolveAiConfig() ?: return@launch
+            val handler = makeStreamHandler(config)
+            try {
+                val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else "main.py"
+                val result = aiRepository.modifyCode(prompt, files, activeFileName, config, handler)
+                if (result.isSuccess) {
+                    if (result.patches.isNotEmpty()) {
+                        _aiState.value = UiState.Success(result.copy(isEdit = true))
+                    } else {
+                        _aiState.value = UiState.Success(result.copy(isEdit = false))
+                    }
                 } else {
-                    _aiState.value = UiState.Success(result.copy(isEdit = false))
+                    _aiState.value = UiState.Error(result.errorMessage ?: "AI request failed to generate patches")
                 }
-            } else {
-                _aiState.value = UiState.Error(result.errorMessage ?: "AI request failed to generate patches")
+            } finally {
+                _aiStreamState.value = null
             }
         }
     }
@@ -539,35 +545,30 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun editCodeWithAi(prompt: String) {
         val files = _currentFiles.value
 
-        val apiKey = secureStorage.groqApiKey
-        if (apiKey.isBlank()) {
-            _aiState.value = UiState.Error(
-                "Groq API key not set.\nPlease add your API key in Settings to use AI features."
-            )
-            return
-        }
-
-        if (!NetworkUtils.isOnline(context)) {
-            _aiState.value = UiState.Error(
-                "No internet connection.\nPlease connect to the internet to use AI features."
-            )
+        if (files.isEmpty()) {
+            _aiState.value = UiState.Error("No code to analyze. Write some code first!")
             return
         }
 
         viewModelScope.launch {
             _aiState.value = UiState.Loading
-            val model = prefsManager.aiModel.first()
-            val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else ""
-            val result = groqRepository.editCode(prompt, files, activeFileName, apiKey, model)
-            if (result.isSuccess) {
-                if (result.patches.isNotEmpty() && result.isEdit) {
-                    _aiState.value = UiState.Success(result)
+            val config = resolveAiConfig() ?: return@launch
+            val handler = makeStreamHandler(config)
+            try {
+                val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else ""
+                val result = aiRepository.editCode(prompt, files, activeFileName, config, handler)
+                if (result.isSuccess) {
+                    if (result.patches.isNotEmpty() && result.isEdit) {
+                        _aiState.value = UiState.Success(result)
+                    } else {
+                        // Show the explanation in the AiResultDialog
+                        _aiState.value = UiState.Success(result.copy(isEdit = false))
+                    }
                 } else {
-                    // Show the explanation in the AiResultDialog
-                    _aiState.value = UiState.Success(result.copy(isEdit = false))
+                    _aiState.value = UiState.Error(result.errorMessage ?: "AI response did not contain valid patches")
                 }
-            } else {
-                _aiState.value = UiState.Error(result.errorMessage ?: "AI response did not contain valid patches")
+            } finally {
+                _aiStreamState.value = null
             }
         }
     }
@@ -609,11 +610,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             delay(500) // Wait for 500ms of inactivity for better UX
             val code = _currentCode.value
             val language = _currentLanguage.value
-            val apiKey = secureStorage.groqApiKey
-            if (apiKey.isBlank() || !NetworkUtils.isOnline(context)) return@launch
+            // Skip AI completions for very large files — latency & token cost
+            // outweigh the value of a one-word suggestion, and building the
+            // prompt would copy huge strings on every idle period.
+            if (code.length > GHOST_MAX_FILE_CHARS) return@launch
+            if (!NetworkUtils.isOnline(context)) return@launch
+            val config = resolveAiConfig(reportError = false) ?: return@launch
 
-            val model = prefsManager.aiModel.first()
-            val result = groqRepository.getGhostSuggestion(code, cursorPosition, language, apiKey, model)
+            val result = aiRepository.getGhostSuggestion(code, cursorPosition, language, config)
             if (result.isSuccess && result.content.isNotBlank()) {
                 if (result.isEdit && result.deleteText != null && result.addText != null) {
                     // REPLACE type with inline diff - show directly in editor
@@ -794,7 +798,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun callAiFeature(
-        action: suspend (List<com.pocketdev.app.data.models.ProjectFile>, String, String, String) -> AiResult
+        action: suspend (List<com.pocketdev.app.data.models.ProjectFile>, String, AiConfig, (ChatStreamEvent) -> Unit) -> AiResult
     ) {
         val files = _currentFiles.value
         val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else ""
@@ -804,29 +808,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        val apiKey = secureStorage.groqApiKey
-        if (apiKey.isBlank()) {
-            _aiState.value = UiState.Error(
-                "Groq API key not set.\nPlease add your API key in Settings to use AI features."
-            )
-            return
-        }
-
-        if (!NetworkUtils.isOnline(context)) {
-            _aiState.value = UiState.Error(
-                "No internet connection.\nPlease connect to the internet to use AI features."
-            )
-            return
-        }
-
         viewModelScope.launch {
             _aiState.value = UiState.Loading
-            val model = prefsManager.aiModel.first()
-            val result = action(files, activeFileName, apiKey, model)
-            _aiState.value = if (result.isSuccess) {
-                UiState.Success(result)
-            } else {
-                UiState.Error(result.errorMessage ?: "AI request failed")
+            val config = resolveAiConfig() ?: return@launch
+            val handler = makeStreamHandler(config)
+            try {
+                val result = action(files, activeFileName, config, handler)
+                _aiState.value = if (result.isSuccess) {
+                    UiState.Success(result)
+                } else {
+                    UiState.Error(result.errorMessage ?: "AI request failed")
+                }
+            } catch (e: Exception) {
+                _aiState.value = UiState.Error(e.message ?: "AI request failed")
+            } finally {
+                _aiStreamState.value = null
             }
         }
     }
@@ -834,23 +830,81 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun chatWithAi(message: String) {
         val files = _currentFiles.value
         val activeFileName = if (files.isNotEmpty()) files[_activeFileIndex.value].name else "main.py"
-        
+
         terminalManager.appendOutput("> $message")
         terminalManager.appendStatusMessage("AI is thinking...")
-        
+
         viewModelScope.launch {
-            val apiKey = secureStorage.groqApiKey
-            if (apiKey.isBlank()) {
-                terminalManager.appendError("Groq API key not set. Please add it in Settings.")
+            val config = resolveAiConfig(reportError = false)
+            if (config == null) {
+                if (!NetworkUtils.isOnline(context)) {
+                    terminalManager.appendError("No internet connection.")
+                } else {
+                    val provider = AiProvider.fromId(prefsManager.aiProvider.first())
+                    terminalManager.appendError(
+                        "${provider.displayName} API key not set. Please add it in Settings."
+                    )
+                }
                 return@launch
             }
-            
-            val model = prefsManager.aiModel.first()
-            val result = groqRepository.editCode(message, files, activeFileName, apiKey, model)
-            if (result.isSuccess) {
-                terminalManager.appendAgentMessage(result.content)
-            } else {
-                terminalManager.appendError(result.errorMessage ?: "Unknown error")
+
+            // Stream the answer live into a dedicated terminal message.
+            val messageId = terminalManager.startStreamingAgent()
+            val reasoning = StringBuilder()
+            val answer = StringBuilder()
+            var phase = AiStreamPhase.CONNECTING
+            var lastPush = 0L
+
+            fun snapshot(): String = buildString {
+                if (phase == AiStreamPhase.THINKING || reasoning.isNotEmpty()) {
+                    if (answer.isEmpty()) {
+                        append("🧠 Thinking…\n")
+                        append(reasoning.takeLast(1800))
+                    } else {
+                        append("🧠 Thought process (tail):\n")
+                        append(reasoning.takeLast(900))
+                        append("\n———\n")
+                    }
+                }
+                if (answer.isNotEmpty()) {
+                    if (reasoning.isNotEmpty()) append("\n")
+                    append(answer.takeLast(3500))
+                }
+            }
+
+            try {
+                val result = aiRepository.editCode(message, files, activeFileName, config) { event ->
+                    when (event) {
+                        ChatStreamEvent.Started -> {}
+                        is ChatStreamEvent.Thinking -> {
+                            phase = AiStreamPhase.THINKING
+                            reasoning.append(event.delta)
+                        }
+                        is ChatStreamEvent.Answer -> {
+                            phase = AiStreamPhase.ANSWERING
+                            answer.append(event.delta)
+                        }
+                    }
+                    val now = System.currentTimeMillis()
+                    if (now - lastPush >= STREAM_UI_THROTTLE_MS) {
+                        lastPush = now
+                        terminalManager.updateStreamingAgent(messageId, snapshot())
+                    }
+                }
+                // Final message: reasoning summary + full answer
+                terminalManager.updateStreamingAgent(messageId, buildString {
+                    if (result.reasoning != null && result.reasoning.isNotBlank()) {
+                        append("🧠 Thought process:\n")
+                        append(result.reasoning.takeLast(2000))
+                        append("\n\n———\n\n")
+                    }
+                    append(if (result.isSuccess) result.content else (result.errorMessage ?: "AI request failed"))
+                })
+            } catch (e: Exception) {
+                terminalManager.updateStreamingAgent(
+                    messageId,
+                    "AI request failed: ${e.message ?: "unknown error"}"
+                )
             }
         }
     }
@@ -862,6 +916,83 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissAiResult() {
         _aiState.value = UiState.Idle
+    }
+
+    /**
+     * Resolves the current AI settings (provider / key / model / thinking mode)
+     * into an [AiConfig] snapshot, or reports a friendly error to [_aiState].
+     */
+    private suspend fun resolveAiConfig(reportError: Boolean = true): AiConfig? {
+        if (!NetworkUtils.isOnline(context)) {
+            if (reportError) {
+                _aiState.value = UiState.Error(
+                    "No internet connection.\nPlease connect to the internet to use AI features."
+                )
+            }
+            return null
+        }
+        val provider = AiProvider.fromId(prefsManager.aiProvider.first())
+        val apiKey = secureStorage.getApiKey(provider)
+        if (apiKey.isBlank()) {
+            if (reportError) {
+                _aiState.value = UiState.Error(
+                    "${provider.displayName} API key not set.\n" +
+                            "Please add your API key in Settings to use AI features."
+                )
+            }
+            return null
+        }
+        return AiConfig(
+            provider = provider,
+            apiKey = apiKey,
+            model = prefsManager.aiModel.first(),
+            thinkingEnabled = prefsManager.thinkingMode.first()
+        )
+    }
+
+    /**
+     * Builds a live-stream handler that feeds [_aiStreamState] (rendered by the
+     * AI progress dialog in the editor) with throttled, tail-capped snapshots,
+     * so even the fastest reasoning models can never jank the UI thread.
+     */
+    private fun makeStreamHandler(config: AiConfig): (ChatStreamEvent) -> Unit {
+        val reasoning = StringBuilder()
+        val answer = StringBuilder()
+        var phase = AiStreamPhase.CONNECTING
+        var lastPush = 0L
+
+        _aiStreamState.value = AiStreamState(
+            provider = config.provider,
+            model = config.model,
+            thinkingEnabled = config.wantsThinking,
+            phase = phase
+        )
+
+        return { event ->
+            when (event) {
+                ChatStreamEvent.Started -> {}
+                is ChatStreamEvent.Thinking -> {
+                    phase = AiStreamPhase.THINKING
+                    reasoning.append(event.delta)
+                }
+                is ChatStreamEvent.Answer -> {
+                    phase = AiStreamPhase.ANSWERING
+                    answer.append(event.delta)
+                }
+            }
+            val now = System.currentTimeMillis()
+            if (now - lastPush >= STREAM_UI_THROTTLE_MS) {
+                lastPush = now
+                _aiStreamState.value = AiStreamState(
+                    provider = config.provider,
+                    model = config.model,
+                    thinkingEnabled = config.wantsThinking,
+                    phase = phase,
+                    reasoning = reasoning.toString().takeLast(REASONING_UI_CAP),
+                    answer = answer.toString().takeLast(ANSWER_UI_CAP)
+                )
+            }
+        }
     }
 
     private fun syncCurrentCodeToActiveFile() {

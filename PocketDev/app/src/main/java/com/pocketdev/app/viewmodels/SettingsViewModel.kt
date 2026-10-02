@@ -3,6 +3,8 @@ package com.pocketdev.app.viewmodels
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketdev.app.api.AiProvider
+import com.pocketdev.app.api.ModelCatalog
 import com.pocketdev.app.utils.PreferencesManager
 import com.pocketdev.app.utils.SecureStorage
 import kotlinx.coroutines.flow.*
@@ -40,39 +42,74 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val aiModel: StateFlow<String> = prefsManager.aiModel
         .stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_AI_MODEL)
 
-    private val _apiKeyState = MutableStateFlow<ApiKeyState>(ApiKeyState.NotSet)
-    val apiKeyState: StateFlow<ApiKeyState> = _apiKeyState.asStateFlow()
+    val aiProvider: StateFlow<AiProvider> = prefsManager.aiProvider
+        .map { AiProvider.fromId(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AiProvider.GROQ)
+
+    val thinkingMode: StateFlow<Boolean> = prefsManager.thinkingMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, PreferencesManager.DEFAULT_THINKING_MODE)
+
+    private val _apiKeyStates = MutableStateFlow<Map<AiProvider, ApiKeyState>>(emptyMap())
+    val apiKeyStates: StateFlow<Map<AiProvider, ApiKeyState>> = _apiKeyStates.asStateFlow()
+
+    /** Key status of the currently selected provider. */
+    val apiKeyState: StateFlow<ApiKeyState> = combine(aiProvider, apiKeyStates) { provider, states ->
+        states[provider] ?: ApiKeyState.NotSet
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ApiKeyState.NotSet)
 
     init {
-        checkApiKey()
+        refreshApiKeyStates()
     }
 
-    private fun checkApiKey() {
-        _apiKeyState.value = if (secureStorage.hasApiKey()) {
-            ApiKeyState.Set(maskApiKey(secureStorage.groqApiKey))
-        } else {
-            ApiKeyState.NotSet
+    private fun refreshApiKeyStates() {
+        val states = AiProvider.entries.associateWith { provider ->
+            if (secureStorage.hasApiKey(provider)) {
+                ApiKeyState.Set(maskApiKey(secureStorage.getApiKey(provider)))
+            } else {
+                ApiKeyState.NotSet
+            }
         }
+        _apiKeyStates.value = states
     }
 
-    fun setApiKey(key: String) {
+    fun setApiKey(provider: AiProvider, key: String) {
         if (key.isBlank()) {
-            _apiKeyState.value = ApiKeyState.Error("API key cannot be empty")
+            _apiKeyStates.value = _apiKeyStates.value.toMutableMap().apply {
+                put(provider, ApiKeyState.Error("API key cannot be empty"))
+            }
             return
         }
-        if (!secureStorage.validateApiKey(key)) {
-            _apiKeyState.value = ApiKeyState.Error(
-                "Invalid API key format. Groq API keys start with 'gsk_'"
-            )
+        if (!secureStorage.validateApiKey(provider, key)) {
+            _apiKeyStates.value = _apiKeyStates.value.toMutableMap().apply {
+                put(provider, ApiKeyState.Error(
+                    "Invalid API key format. ${provider.displayName} keys look like '${provider.keyPrefixHint}'"
+                ))
+            }
             return
         }
-        secureStorage.groqApiKey = key
-        _apiKeyState.value = ApiKeyState.Set(maskApiKey(key))
+        secureStorage.setApiKey(provider, key)
+        _apiKeyStates.value = _apiKeyStates.value.toMutableMap().apply {
+            put(provider, ApiKeyState.Set(maskApiKey(key)))
+        }
     }
 
-    fun clearApiKey() {
-        secureStorage.clearApiKey()
-        _apiKeyState.value = ApiKeyState.NotSet
+    fun clearApiKey(provider: AiProvider) {
+        secureStorage.clearApiKey(provider)
+        _apiKeyStates.value = _apiKeyStates.value.toMutableMap().apply {
+            put(provider, ApiKeyState.NotSet)
+        }
+    }
+
+    /** Switch provider; resets the model to the new provider's default. */
+    fun setAiProvider(provider: AiProvider) {
+        viewModelScope.launch {
+            prefsManager.setAiProvider(provider.id)
+            prefsManager.setAiModel(ModelCatalog.defaultModel(provider))
+        }
+    }
+
+    fun setThinkingMode(enabled: Boolean) {
+        viewModelScope.launch { prefsManager.setThinkingMode(enabled) }
     }
 
     fun setTheme(theme: String) {
@@ -117,7 +154,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun maskApiKey(key: String): String {
         return if (key.length > 8) {
-            "${key.take(7)}${"*".repeat(key.length - 11)}${key.takeLast(4)}"
+            "${key.take(7)}${"*".repeat((key.length - 11).coerceAtLeast(1))}${key.takeLast(4)}"
         } else "****"
     }
 

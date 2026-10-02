@@ -25,8 +25,12 @@ class PreferencesManager(private val context: Context) {
         val KEY_UNSAVED_CODE = stringPreferencesKey("unsaved_code")
         val KEY_UNSAVED_LANGUAGE = stringPreferencesKey("unsaved_language")
         val KEY_AI_MODEL = stringPreferencesKey("ai_model")
+        val KEY_AI_PROVIDER = stringPreferencesKey("ai_provider")
+        val KEY_THINKING_MODE = booleanPreferencesKey("thinking_mode")
 
         const val DEFAULT_AI_MODEL = "llama-3.3-70b-versatile"
+        const val DEFAULT_AI_PROVIDER = "groq"
+        const val DEFAULT_THINKING_MODE = true
 
         const val THEME_DARK = "dark"
         const val THEME_LIGHT = "light"
@@ -86,6 +90,14 @@ class PreferencesManager(private val context: Context) {
 
     val aiModel: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[KEY_AI_MODEL] ?: DEFAULT_AI_MODEL
+    }
+
+    val aiProvider: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_AI_PROVIDER] ?: DEFAULT_AI_PROVIDER
+    }
+
+    val thinkingMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_THINKING_MODE] ?: DEFAULT_THINKING_MODE
     }
 
     suspend fun setTheme(theme: String) {
@@ -152,6 +164,14 @@ class PreferencesManager(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_AI_MODEL] = model }
     }
 
+    suspend fun setAiProvider(providerId: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_AI_PROVIDER] = providerId }
+    }
+
+    suspend fun setThinkingMode(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_THINKING_MODE] = enabled }
+    }
+
     suspend fun resetToDefaults() {
         context.dataStore.edit { prefs ->
             prefs[KEY_THEME] = THEME_DARK
@@ -163,6 +183,8 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_LINE_NUMBERS] = true
             prefs[KEY_WORD_WRAP] = false
             prefs[KEY_AI_MODEL] = DEFAULT_AI_MODEL
+            prefs[KEY_AI_PROVIDER] = DEFAULT_AI_PROVIDER
+            prefs[KEY_THINKING_MODE] = DEFAULT_THINKING_MODE
         }
     }
 }

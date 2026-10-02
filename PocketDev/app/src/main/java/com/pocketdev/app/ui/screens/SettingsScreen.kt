@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
@@ -38,10 +40,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.pocketdev.app.api.AiProvider
+import com.pocketdev.app.api.ModelCatalog
+import com.pocketdev.app.api.ModelInfo
 import com.pocketdev.app.ui.utils.DevicePerformance
 import com.pocketdev.app.ui.utils.rememberPerformanceTier
 import com.pocketdev.app.viewmodels.SettingsViewModel
 import kotlinx.coroutines.delay
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,6 +64,8 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val wordWrap by viewModel.wordWrap.collectAsStateWithLifecycle()
     val apiKeyState by viewModel.apiKeyState.collectAsStateWithLifecycle()
     val aiModel by viewModel.aiModel.collectAsStateWithLifecycle()
+    val aiProvider by viewModel.aiProvider.collectAsStateWithLifecycle()
+    val thinkingMode by viewModel.thinkingMode.collectAsStateWithLifecycle()
 
     val onSetTheme = remember { { value: String -> viewModel.setTheme(value) } }
     val onSetFontSize = remember { { size: Int -> viewModel.setFontSize(size) } }
@@ -65,9 +75,11 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val onSetAutoSave = remember { { enabled: Boolean -> viewModel.setAutoSave(enabled) } }
     val onSetAutocomplete = remember { { enabled: Boolean -> viewModel.setAutocomplete(enabled) } }
     val onSetGhostSuggestions = remember { { enabled: Boolean -> viewModel.setGhostSuggestions(enabled) } }
-    val onSetApiKey = remember { { key: String -> viewModel.setApiKey(key) } }
-    val onClearApiKey = remember { { viewModel.clearApiKey() } }
+    val onSetApiKey = remember(aiProvider) { { key: String -> viewModel.setApiKey(aiProvider, key) } }
+    val onClearApiKey = remember(aiProvider) { { viewModel.clearApiKey(aiProvider) } }
     val onSetAiModel = remember { { model: String -> viewModel.setAiModel(model) } }
+    val onSetAiProvider = remember { { provider: AiProvider -> viewModel.setAiProvider(provider) } }
+    val onSetThinkingMode = remember { { enabled: Boolean -> viewModel.setThinkingMode(enabled) } }
     val onResetDefaults = remember { { viewModel.resetToDefaults() } }
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
@@ -106,18 +118,31 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             ) {
                 // AI Section
                 PremiumSettingsSectionHeader(
-                    title = "🤖 AI Integration (Groq)",
+                    title = "🤖 AI Integration",
                     color = MaterialTheme.colorScheme.primary
                 )
             }
 
-            // API Key status card with animated entrance
+            // Provider selector (Groq / OpenRouter / Gemini)
+            AnimatedVisibility(
+                visible = isLoaded,
+                enter = fadeIn(animationSpec = tween(400, delayMillis = 50)) + 
+                    slideInVertically(animationSpec = spring(stiffness = Spring.StiffnessLow)) { it / 4 }
+            ) {
+                PremiumProviderSelector(
+                    selectedProvider = aiProvider,
+                    onSelectProvider = onSetAiProvider
+                )
+            }
+
+            // API Key status card for the selected provider
             AnimatedVisibility(
                 visible = isLoaded,
                 enter = fadeIn(animationSpec = tween(400, delayMillis = 100)) + 
                     slideInVertically(animationSpec = spring(stiffness = Spring.StiffnessLow)) { it / 4 }
             ) {
                 PremiumApiKeyCard(
+                    provider = aiProvider,
                     apiKeyState = apiKeyState,
                     onSetApiKey = { showApiKeyDialog = true },
                     onClearApiKey = onClearApiKey
@@ -131,24 +156,38 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             ) {
                 PremiumSettingsItem(
                     icon = Icons.Default.Info,
-                    title = "How to get Groq API Key",
-                    subtitle = "Free API key from console.groq.com",
+                    title = "How to get a ${aiProvider.displayName} API Key",
+                    subtitle = "Free keys from ${aiProvider.consoleUrl.removePrefix("https://")}",
                     onClick = { showApiKeyInfo = true }
                 )
             }
 
-            // AI Model Selection
+            // AI Model picker (curated catalog + custom input)
             AnimatedVisibility(
                 visible = isLoaded,
                 enter = fadeIn(animationSpec = tween(400, delayMillis = 200)) + 
                     slideInVertically(animationSpec = spring(stiffness = Spring.StiffnessLow)) { it / 4 }
             ) {
-                var modelText by remember(aiModel) { mutableStateOf(aiModel) }
-                PremiumModelInputCard(
-                    modelText = modelText,
+                PremiumModelPickerCard(
+                    provider = aiProvider,
                     aiModel = aiModel,
-                    onModelTextChange = { modelText = it },
-                    onSaveModel = { if (modelText.isNotBlank()) onSetAiModel(modelText.trim()) }
+                    onSelectModel = onSetAiModel,
+                    onSetCustomModel = onSetAiModel
+                )
+            }
+
+            // Thinking / reasoning mode toggle
+            AnimatedVisibility(
+                visible = isLoaded,
+                enter = fadeIn(animationSpec = tween(400, delayMillis = 250)) + 
+                    slideInVertically(animationSpec = spring(stiffness = Spring.StiffnessLow)) { it / 4 }
+            ) {
+                PremiumSettingsSwitchItem(
+                    icon = Icons.Default.Psychology,
+                    title = "Thinking Mode",
+                    subtitle = "Let reasoning models show their thought process 🧠",
+                    checked = thinkingMode,
+                    onCheckedChange = onSetThinkingMode
                 )
             }
 
@@ -370,6 +409,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     // API Key Dialog
     if (showApiKeyDialog) {
         PremiumApiKeyDialog(
+            provider = aiProvider,
             onSave = { key ->
                 onSetApiKey(key)
                 showApiKeyDialog = false
@@ -404,18 +444,19 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
     // API Key info dialog
     if (showApiKeyInfo) {
+        val context = LocalContext.current
         AlertDialog(
             onDismissRequest = { showApiKeyInfo = false },
             icon = { Icon(Icons.Default.Key, null, tint = MaterialTheme.colorScheme.primary) },
-            title = { Text("Getting a Groq API Key") },
+            title = { Text("Getting a ${aiProvider.displayName} API Key") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Follow these steps to get your free Groq API key:")
-                    Text("1. Visit console.groq.com in your browser")
+                    Text("Follow these steps to get your ${aiProvider.displayName} API key:")
+                    Text("1. Visit ${aiProvider.consoleUrl.removePrefix("https://")} in your browser")
                     Text("2. Create a free account or sign in")
-                    Text("3. Go to API Keys section")
+                    Text("3. Go to the API Keys section")
                     Text("4. Click \"Create API Key\"")
-                    Text("5. Copy the key (starts with gsk_)")
+                    Text("5. Copy the key (looks like ${aiProvider.keyPrefixHint})")
                     Text("6. Paste it in the API Key field here")
                     Spacer(Modifier.height(4.dp))
                     Surface(
@@ -423,7 +464,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         shape = MaterialTheme.shapes.small
                     ) {
                         Text(
-                            "💡 Groq offers a generous free tier — no credit card required!",
+                            "💡 ${aiProvider.tagline}",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(8.dp)
                         )
@@ -431,6 +472,13 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             },
             confirmButton = {
+                TextButton(onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(aiProvider.consoleUrl)))
+                    }
+                }) { Text("Open in Browser") }
+            },
+            dismissButton = {
                 TextButton(onClick = { showApiKeyInfo = false }) { Text("Got it!") }
             }
         )
@@ -494,6 +542,7 @@ fun PremiumDivider() {
 // Premium API Key card with animated status
 @Composable
 fun PremiumApiKeyCard(
+    provider: AiProvider,
     apiKeyState: SettingsViewModel.ApiKeyState,
     onSetApiKey: () -> Unit,
     onClearApiKey: () -> Unit
@@ -557,9 +606,9 @@ fun PremiumApiKeyCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = when (apiKeyState) {
-                        is SettingsViewModel.ApiKeyState.Set -> "API Key Configured"
-                        is SettingsViewModel.ApiKeyState.Error -> "Invalid API Key"
-                        else -> "No API Key Set"
+                        is SettingsViewModel.ApiKeyState.Set -> "${provider.displayName} Key Configured"
+                        is SettingsViewModel.ApiKeyState.Error -> "Invalid ${provider.displayName} Key"
+                        else -> "No ${provider.displayName} Key Set"
                     },
                     style = MaterialTheme.typography.titleSmall
                 )
@@ -883,14 +932,110 @@ fun PremiumTabSizeSelector(
     }
 }
 
-// Premium model input card
+// Premium provider selector (Groq / OpenRouter / Gemini)
 @Composable
-fun PremiumModelInputCard(
-    modelText: String,
-    aiModel: String,
-    onModelTextChange: (String) -> Unit,
-    onSaveModel: () -> Unit
+fun PremiumProviderSelector(
+    selectedProvider: AiProvider,
+    onSelectProvider: (AiProvider) -> Unit
 ) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.Cloud,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("AI Provider", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Choose who powers your AI features",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AiProvider.entries.forEach { provider ->
+                val selected = provider == selectedProvider
+
+                val cardScale by animateFloatAsState(
+                    targetValue = if (selected) 1.02f else 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    ),
+                    label = "providerScale"
+                )
+
+                Card(
+                    onClick = { if (!selected) onSelectProvider(provider) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .scale(cardScale),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    border = if (selected) androidx.compose.foundation.BorderStroke(
+                        width = 1.5.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    ) else null
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = when (provider) {
+                                AiProvider.GROQ -> Icons.Default.Bolt
+                                AiProvider.OPENROUTER -> Icons.Default.Hub
+                                AiProvider.GEMINI -> Icons.Default.AutoAwesome
+                            },
+                            contentDescription = provider.displayName,
+                            tint = if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            provider.displayName,
+                            style = MaterialTheme.typography.labelMedium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            provider.tagline,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 2
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Premium model picker card: curated catalog + custom model id
+@Composable
+fun PremiumModelPickerCard(
+    provider: AiProvider,
+    aiModel: String,
+    onSelectModel: (String) -> Unit,
+    onSetCustomModel: (String) -> Unit
+) {
+    val catalog = remember(provider) { ModelCatalog.models[provider].orEmpty() }
+    var showCustomInput by remember { mutableStateOf(false) }
+    var modelText by remember(aiModel, provider) { mutableStateOf(aiModel) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -909,51 +1054,135 @@ fun PremiumModelInputCard(
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(12.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("AI Model", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Enter exact model name from console.groq.com/docs/models",
+                        "Pick a ${provider.displayName} model — 🧠 marks thinking models",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = modelText,
-                onValueChange = onModelTextChange,
-                label = { Text("Model Name") },
-                placeholder = { Text("e.g. llama-3.3-70b-versatile") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                trailingIcon = {
-                    AnimatedContent(
-                        targetState = modelText != aiModel && modelText.isNotBlank(),
-                        transitionSpec = {
-                            scaleIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) togetherWith
-                            scaleOut(animationSpec = tween(100))
-                        },
-                        label = "saveIcon"
-                    ) { showSave ->
-                        if (showSave) {
-                            IconButton(onClick = onSaveModel) {
-                                Icon(Icons.Default.Check, "Save model", tint = MaterialTheme.colorScheme.primary)
+
+            Spacer(Modifier.height(10.dp))
+
+            catalog.forEach { model ->
+                val selected = model.id == aiModel
+                val rowScale by animateFloatAsState(
+                    targetValue = if (selected) 1f else 1f,
+                    animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                    label = "modelRowScale"
+                )
+                Surface(
+                    onClick = { onSelectModel(model.id) },
+                    shape = MaterialTheme.shapes.medium,
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surface,
+                    border = if (selected) androidx.compose.foundation.BorderStroke(
+                        width = 1.5.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    ) else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                        .scale(rowScale)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { onSelectModel(model.id) }
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    model.label,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                if (model.free) {
+                                    Spacer(Modifier.width(6.dp))
+                                    AssistChip(
+                                        onClick = { onSelectModel(model.id) },
+                                        label = { Text("Free", style = MaterialTheme.typography.labelSmall) },
+                                        modifier = Modifier.height(24.dp)
+                                    )
+                                }
+                            }
+                            if (model.description.isNotBlank()) {
+                                Text(
+                                    model.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                 }
-            )
-            Spacer(Modifier.height(4.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = MaterialTheme.shapes.small
+            }
+
+            // Custom model input toggle
+            Spacer(Modifier.height(6.dp))
+            TextButton(
+                onClick = { showCustomInput = !showCustomInput },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
             ) {
-                Text(
-                    "Visit console.groq.com/docs/models for available model names",
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(8.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    if (showCustomInput) Icons.Default.ExpandLess else Icons.Default.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
                 )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    if (showCustomInput) "Hide custom model ID" else "Use a custom model ID",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+
+            AnimatedVisibility(
+                visible = showCustomInput,
+                enter = fadeIn(tween(200)) + expandVertically(tween(220)),
+                exit = fadeOut(tween(160)) + shrinkVertically(tween(200))
+            ) {
+                Column {
+                    OutlinedTextField(
+                        value = modelText,
+                        onValueChange = { modelText = it },
+                        label = { Text("Custom model ID") },
+                        placeholder = { Text(ModelCatalog.defaultModel(provider)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            AnimatedContent(
+                                targetState = modelText != aiModel && modelText.isNotBlank(),
+                                transitionSpec = {
+                                    scaleIn(animationSpec = spring(stiffness = Spring.StiffnessLow)) togetherWith
+                                    scaleOut(animationSpec = tween(100))
+                                },
+                                label = "saveIcon"
+                            ) { showSave ->
+                                if (showSave) {
+                                    IconButton(onClick = { if (modelText.isNotBlank()) onSetCustomModel(modelText.trim()) }) {
+                                        Icon(Icons.Default.Check, "Save model", tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                        }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            "Type the exact model id from ${provider.consoleUrl.removePrefix("https://")}",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(8.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
@@ -962,6 +1191,7 @@ fun PremiumModelInputCard(
 // Premium API Key dialog
 @Composable
 fun PremiumApiKeyDialog(
+    provider: AiProvider,
     onSave: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -988,11 +1218,11 @@ fun PremiumApiKeyDialog(
                 modifier = Modifier.size(32.dp)
             ) 
         },
-        title = { Text("Set Groq API Key") },
+        title = { Text("Set ${provider.displayName} API Key") },
         text = {
             Column {
                 Text(
-                    "Enter your Groq API key to enable AI features.",
+                    "Enter your ${provider.displayName} API key to enable AI features.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(8.dp))
@@ -1000,7 +1230,7 @@ fun PremiumApiKeyDialog(
                     value = apiKey,
                     onValueChange = { apiKey = it },
                     label = { Text("API Key") },
-                    placeholder = { Text("gsk_...") },
+                    placeholder = { Text(provider.keyPrefixHint) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
