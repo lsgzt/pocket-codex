@@ -156,13 +156,25 @@ class AiRepository {
         }
 
         // Ghost suggestions always take the fast path: no reasoning params.
+        // v1.1.1 fix: use the STREAMING code path (same as chat) instead of the
+        // Retrofit non-streaming call — the direct OkHttp/SSE path is the one
+        // proven to work in minified release builds, and first token arrives
+        // sooner, so suggestions feel snappier.
         val fastConfig = config.copy(thinkingEnabled = false)
         val result = callAi(
             prompt, fastConfig, EDITOR_SYSTEM_PROMPT,
-            temperature = 0.3, extractCode = false, useStreaming = false,
+            temperature = 0.3, extractCode = false, useStreaming = true,
             onEvent = {}, parsePatches = false, maxTokens = GHOST_MAX_TOKENS
         )
-        if (!result.isSuccess) return result
+        if (!result.isSuccess) {
+            // Ambient feature: never surface an error dialog, but leave a
+            // logcat breadcrumb so failures are diagnosable with `adb logcat`.
+            android.util.Log.w(
+                "PocketDev",
+                "Ghost suggestion failed: ${result.errorMessage?.take(300)}"
+            )
+            return result
+        }
 
         val content = result.content
         val typeMatch = Regex("TYPE:\\s*(APPEND|REPLACE)").find(content)

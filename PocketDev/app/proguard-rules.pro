@@ -20,6 +20,11 @@
 -keepclassmembers,allowshrinking,allowobfuscation interface * {
     @retrofit2.http.* <methods>;
 }
+# Retrofit needs parameter annotations + generic signatures to build calls
+# (e.g. @Header/@Body/@HeaderMap params and Response<ChatResponse> types).
+-keepattributes Exceptions, InnerClasses, EnclosingMethod, Signature,
+    RuntimeVisibleParameterAnnotations, AnnotationDefault
+-keep interface com.pocketdev.app.api.service.ChatApiService { *; }
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
 -dontwarn javax.annotation.**
 -dontwarn kotlin.Unit
@@ -38,6 +43,15 @@
 # Keep Chaquopy (Python Engine)
 -keep class com.chaquo.python.** { *; }
 -dontwarn com.chaquo.python.**
+
+# --- v1.1.1 fix: Chaquopy Python->Kotlin bridge callbacks -------------------
+# Python invokes these Kotlin interfaces' call() method from native code via
+# JNI reflection BY NAME. R8 obfuscated them in v1.1.0, which broke Python
+# execution ("object is not callable" / NoSuchMethod). Keep them intact.
+-keep interface com.pocketdev.app.execution.PythonEngine$InputCallback { *; }
+-keep interface com.pocketdev.app.execution.PythonEngine$OutputCallback { *; }
+-keep class * implements com.pocketdev.app.execution.PythonEngine$InputCallback { *; }
+-keep class * implements com.pocketdev.app.execution.PythonEngine$OutputCallback { *; }
 
 # Keep security crypto
 -keep class androidx.security.crypto.** { *; }
